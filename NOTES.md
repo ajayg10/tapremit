@@ -1,7 +1,7 @@
 # NOTES.md (Living Memory)
 
 ## 1. Current status
-Phase 0, 1, 2, 3 and AI Agent Proposal Flow (Phases B-F) done and verified (29 tests passing, deterministic policy engine, proposal hashing, IDOR isolation, and audit privacy verified).
+Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), and Phase G (Approval & Audit Correctness Gaps) done and verified (34 tests passing across 5 suites). Policy engine re-evaluated atomically at approval time, CAS state transitions, separated `denied` vs `rejected` states, audit allowlist redaction, and SQLite append-only tamper-evident audit hash chain verified.
 
 ## 2. Phase log
 - [x] Phase 0: Scaffold
@@ -9,6 +9,7 @@ Phase 0, 1, 2, 3 and AI Agent Proposal Flow (Phases B-F) done and verified (29 t
 - [x] Phase 2: Database and users
 - [x] Phase 3: Auth (passkey)
 - [x] Phase Agent: AI Agent proposal flow, deterministic policy engine, proposal hashing, approval state machine, append-only audit trail
+- [x] Phase G: Approval and audit correctness gaps (CAS transitions, approval-time policy recheck, denied vs rejected separation, audit hash chain, allowlist redaction)
 - [ ] Phase 4: AUSD balance and transfer
 - [ ] Phase 5: Aurora Intents adapter
 - [ ] Phase 6: History and live status
@@ -35,8 +36,13 @@ Phase 0, 1, 2, 3 and AI Agent Proposal Flow (Phases B-F) done and verified (29 t
 - Expected 4xx errors are logged at WARN.
 - Using JWT for short-lived sessions after WebAuthn/Passkey auth.
 - AI Agent output is strictly untrusted: parsed by strict Zod schema, recipient handles resolved against internal DB (never trusting model mappings).
-- The agent has zero financial custody or tools; all proposals require explicit human approval; auto-execution is prohibited.
 - Proposal approval cryptographically binds to a canonical SHA-256 hash of proposal fields (`proposal_hash`); any modification fails verification.
+- Canonical proposal hash includes `id`, `user_id`, `recipient_id`, `recipient_handle`, `amount`, `asset`, `network`, `origin`, `purpose`, `expires_at`, `created_at`.
+- State transitions are compare-and-swap (`UPDATE proposals SET status = @to, updated_at = @now WHERE id = @id AND status IN (...)`) to prevent concurrent double-approvals.
+- Policy engine evaluates both at proposal creation and again atomically at human approval time inside SQLite transaction.
+- Status `denied` (by deterministic policy engine) is distinct from `rejected` (by human user).
+- `audit_logs` maintains a cryptographic tamper-evident hash chain (`prev_hash` + `entry_hash`) ordered by SQLite `rowid`, with DB triggers enforcing append-only behavior (no UPDATE, no DELETE).
+- Audit log details are strictly allowlist-filtered before storage to prevent sensitive data leakage.
 - Mock payments explicitly label settlement as `SIMULATED` with `sim_0x...` tx hashes.
 
 ## 6. Known issues / lessons

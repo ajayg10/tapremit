@@ -5,7 +5,8 @@ export type ProposalStatus =
   | 'policy_checked'
   | 'awaiting_approval'
   | 'approved'
-  | 'rejected'
+  | 'rejected'           // human rejected
+  | 'denied'             // policy engine denied (creation or approval-time re-check)
   | 'expired'
   | 'submitted'
   | 'confirmed'
@@ -130,12 +131,13 @@ export const proposalsRepo = {
   },
 
   getRolling24hTotalAmount: (userId: string): bigint => {
-    // Sum amounts for proposals created in the last 24 hours that were approved, submitted, confirmed, or awaiting_approval
+    // Count only settled statuses so multiple pending proposals can coexist;
+    // the approval-time policy re-check is the enforcement point for the daily limit.
     const rows = db.prepare(`
       SELECT amount FROM proposals
       WHERE user_id = ?
         AND created_at >= datetime('now', '-24 hours')
-        AND status NOT IN ('rejected', 'expired', 'failed')
+        AND status IN ('submitted', 'confirmed', 'simulated_confirmed')
     `).all(userId) as { amount: string }[];
 
     let total = 0n;

@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   action TEXT NOT NULL,
   proposal_hash TEXT,
   details TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  prev_hash TEXT,
+  entry_hash TEXT,
+  created_at TEXT NOT NULL,
   FOREIGN KEY(proposal_id) REFERENCES proposals(id)
 );
 
@@ -87,6 +89,31 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_proposal_id ON audit_logs(proposal_id)
 export const runMigrations = () => {
   try {
     db.exec(migrations);
+
+    // Additive column migrations for existing databases (silently skip if already present)
+    const additiveColumns = [
+      `ALTER TABLE audit_logs ADD COLUMN prev_hash TEXT`,
+      `ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT`,
+    ];
+    for (const sql of additiveColumns) {
+      try { db.exec(sql); } catch { /* column already exists */ }
+    }
+
+    // Enforce append-only audit trail at the DB engine level
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
+        BEFORE UPDATE ON audit_logs
+        BEGIN
+          SELECT RAISE(ABORT, 'audit_logs is append-only: updates are not permitted');
+        END;
+
+      CREATE TRIGGER IF NOT EXISTS audit_logs_no_delete
+        BEFORE DELETE ON audit_logs
+        BEGIN
+          SELECT RAISE(ABORT, 'audit_logs is append-only: deletes are not permitted');
+        END;
+    `);
+
     console.log('✅ Migrations applied successfully');
   } catch (error) {
     console.error('❌ Migration failed:', error);

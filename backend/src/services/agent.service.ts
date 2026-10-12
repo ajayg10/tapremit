@@ -98,14 +98,17 @@ export class AgentService {
     const expiresAt = new Date(Date.now() + env.PROPOSAL_TTL_SECONDS * 1000).toISOString();
 
     const proposalHash = computeCanonicalProposalHash({
-      id: proposalId,
-      user_id: userId,
-      recipient_id: recipient.id,
+      id:               proposalId,
+      user_id:          userId,
+      recipient_id:     recipient.id,
       recipient_handle: recipient.handle,
-      amount: parseResult.amount,
-      asset: parseResult.asset,
-      purpose: parseResult.purpose || null,
-      created_at: createdAt,
+      amount:           parseResult.amount,
+      asset:            parseResult.asset,
+      network:          'Monad Testnet',
+      origin:           'agent',
+      purpose:          parseResult.purpose || null,
+      expires_at:       expiresAt,
+      created_at:       createdAt,
     });
 
     // 5. Evaluate Deterministic Policy Engine (LLM has zero authority)
@@ -119,8 +122,9 @@ export class AgentService {
       expiresAt,
     });
 
-    // Status assignment
-    const status = policyResult.decision === 'DENY' ? 'rejected' : 'awaiting_approval';
+    // denied  = policy engine blocked it (this is its terminal state)
+    // awaiting_approval = needs human authorization
+    const status = policyResult.decision === 'DENY' ? 'denied' : 'awaiting_approval';
 
     // 6. Save Proposal
     const proposal = proposalsRepo.create({
