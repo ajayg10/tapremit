@@ -17,6 +17,11 @@ const envSchema = z.object({
   WEBAUTHN_ORIGIN: z.string().default('http://localhost:3000'),
   JWT_SECRET: z.string().default('mock_secret_for_development_only_123'),
   JWT_EXPIRY: z.string().default('1h'),
+  MOCK_LLM: z.enum(['true', 'false']).default('true').transform((val) => val === 'true'),
+  MOCK_PAYMENT_EXECUTOR: z.enum(['true', 'false']).default('true').transform((val) => val === 'true'),
+  PER_TX_LIMIT_AUSD: z.string().default('50').transform((val) => parseFloat(val)),
+  DAILY_LIMIT_AUSD: z.string().default('200').transform((val) => parseFloat(val)),
+  PROPOSAL_TTL_SECONDS: z.string().default('900').transform((val) => parseInt(val, 10)),
 }).refine(data => data.MOCK_CHAIN === true || !!data.MONAD_RPC_URL, {
   message: "MONAD_RPC_URL is required when MOCK_CHAIN is false",
   path: ["MONAD_RPC_URL"]

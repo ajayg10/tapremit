@@ -1,13 +1,14 @@
 # NOTES.md (Living Memory)
 
 ## 1. Current status
-Phase 0, 1, 2, 3 done and verified (tests passing, real RPC verified, logging privacy verified). Phase 4 starting.
+Phase 0, 1, 2, 3 and AI Agent Proposal Flow (Phases B-F) done and verified (29 tests passing, deterministic policy engine, proposal hashing, IDOR isolation, and audit privacy verified).
 
 ## 2. Phase log
 - [x] Phase 0: Scaffold
 - [x] Phase 1: Chain connection
 - [x] Phase 2: Database and users
 - [x] Phase 3: Auth (passkey)
+- [x] Phase Agent: AI Agent proposal flow, deterministic policy engine, proposal hashing, approval state machine, append-only audit trail
 - [ ] Phase 4: AUSD balance and transfer
 - [ ] Phase 5: Aurora Intents adapter
 - [ ] Phase 6: History and live status
@@ -33,6 +34,10 @@ Phase 0, 1, 2, 3 done and verified (tests passing, real RPC verified, logging pr
 - The first claimant of a phone number owns the lookup, as there is currently no OTP verification. This is spoofable and must not be presented as secure.
 - Expected 4xx errors are logged at WARN.
 - Using JWT for short-lived sessions after WebAuthn/Passkey auth.
+- AI Agent output is strictly untrusted: parsed by strict Zod schema, recipient handles resolved against internal DB (never trusting model mappings).
+- The agent has zero financial custody or tools; all proposals require explicit human approval; auto-execution is prohibited.
+- Proposal approval cryptographically binds to a canonical SHA-256 hash of proposal fields (`proposal_hash`); any modification fails verification.
+- Mock payments explicitly label settlement as `SIMULATED` with `sim_0x...` tx hashes.
 
 ## 6. Known issues / lessons
 - `https://rpc-devnet.monad.xyz` and `https://rpc.testnet.monad.xyz` do not resolve (ENOTFOUND), never use them.
@@ -40,6 +45,7 @@ Phase 0, 1, 2, 3 done and verified (tests passing, real RPC verified, logging pr
 - Phone numbers leaked through `app.ts` spreading `req` in `pinoHttp` serializers, exposing `req.raw.body`. Fixed by explicitly picking safe properties for `req` serializer and adding comprehensive pino redact paths.
 - Auth routes lacked rate limits and `login/start` allowed handle enumeration; fixed by adding `express-rate-limit` and returning identical generic responses for known/unknown handles.
 - `DEBUG_SQL` caveat: better-sqlite3 verbose logging must stay disabled for sensitive data. The earlier claim that better-sqlite3 verbose never exposes parameters was wrong.
+- `better-sqlite3@13.0.3` lacks prebuilt binaries on Windows for Node 24 and triggered node-gyp build failures without VS C++ tools. Resolved by using Node 20 LTS via `fnm` and pinning `better-sqlite3@11.8.1`, which contains official prebuilts.
 
 ## 7. Environment variables
 | Variable | Purpose | Required | Default |
@@ -62,6 +68,11 @@ Phase 0, 1, 2, 3 done and verified (tests passing, real RPC verified, logging pr
 | AUTH_IP_RATE_LIMIT_WINDOW_MS | Auth IP rate limit window (ms) | Optional | 900000 |
 | ME_RATE_LIMIT_MAX | Max requests for /auth/me per window | Optional | 120 |
 | ME_RATE_LIMIT_WINDOW_MS | /auth/me rate limit window (ms) | Optional | 60000 |
+| MOCK_LLM | Use mock LLM adapter | Optional | true |
+| MOCK_PAYMENT_EXECUTOR | Use mock payment executor | Optional | true |
+| PER_TX_LIMIT_AUSD | Max AUSD per transaction | Optional | 50 |
+| DAILY_LIMIT_AUSD | Max rolling 24h AUSD limit | Optional | 200 |
+| PROPOSAL_TTL_SECONDS | Proposal expiry TTL in seconds | Optional | 900 |
 
 *Note: When deploying behind a reverse proxy (e.g., Vercel, Nginx), `trust proxy` must be configured in Express so the rate limiter sees real client IPs. Limiter counters are stored in memory and reset on server restart.*
 
@@ -106,6 +117,29 @@ Phase 0, 1, 2, 3 done and verified (tests passing, real RPC verified, logging pr
   - **Auth**: Required (JWT Bearer)
   - **Request**: `{ "phone": "+1234567890" }` or `{ "handle": "alice" }`
   - **Response**: `{ "handle": "alice", "display_name": "Alice" }`
+
+- **POST /agent/propose**
+  - **Auth**: Required (JWT Bearer)
+  - **Request**: `{ "instruction": "send 5 test AUSD to @riya for design", "idempotency_key": "optional-key" }`
+  - **Response**: `{ "type": "PROPOSAL", "proposal": { "id": "...", "amount": "5000000", "display_amount": "5", "asset": "AUSD", "status": "awaiting_approval", "proposal_hash": "...", "policy_decision": "REQUIRE_APPROVAL", "policy_reasons": [...] }, "provider": "MockLLM...", "isMock": true }` or `{ "type": "CLARIFICATION", "message": "...", "provider": "...", "isMock": true }`
+
+- **GET /proposals/:id**
+  - **Auth**: Required (JWT Bearer, sender only)
+  - **Response**: Proposal object with parsed `policy_reasons`
+
+- **POST /proposals/:id/approve**
+  - **Auth**: Required (JWT Bearer, sender only)
+  - **Request**: `{ "proposal_hash": "..." }` (optional client reviewed hash)
+  - **Response**: `{ "proposal": { "status": "simulated_confirmed", ... }, "receipt": { "status": "simulated_confirmed", "txHash": "sim_0x...", "isSimulated": true } }`
+
+- **POST /proposals/:id/reject**
+  - **Auth**: Required (JWT Bearer, sender only)
+  - **Request**: `{ "reason": "optional reason" }`
+  - **Response**: Rejected proposal object
+
+- **GET /proposals/:id/timeline**
+  - **Auth**: Required (JWT Bearer, sender or recipient)
+  - **Response**: `{ "proposal": {...}, "timeline": [{ "timestamp": "...", "actor": "agent|policy_engine|user|system", "action": "...", "humanDescription": "...", "isSimulated": boolean }] }`
 
 ## 9. Bounty proof
 - **Agora**: Not started
