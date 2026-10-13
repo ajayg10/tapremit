@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getStoredUser } from '@/lib/auth';
-import { User, Proposal } from '@/lib/types';
+import { User, Proposal, SystemStatus } from '@/lib/types';
 import Navbar from '@/components/Navbar';
 import {
   Sparkles,
@@ -13,6 +13,7 @@ import {
   AlertCircle,
   HelpCircle,
   ArrowUpRight,
+  ArrowDownLeft,
   ShieldCheck,
   Coins,
   Clock,
@@ -24,31 +25,13 @@ import {
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [instruction, setInstruction] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [fetchingTxs, setFetchingTxs] = useState<boolean>(true);
   const [recentProposals, setRecentProposals] = useState<Proposal[]>([]);
   const [clarificationMessage, setClarificationMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Suggested instructions for judges to test different flows
-  const SAMPLE_PROMPTS = [
-    {
-      label: 'Standard Proposal (Passes Policy)',
-      prompt: 'send 5 test AUSD to @riya for design work',
-      tag: 'Normal Flow',
-    },
-    {
-      label: 'Exceeds Per-Tx Limit ($60 > $50)',
-      prompt: 'send 60 AUSD to @bob_builder for urgent server costs',
-      tag: 'Policy Deny',
-    },
-    {
-      label: 'Ambiguous Prompt (Missing Details)',
-      prompt: 'send some money to my friend please',
-      tag: 'Clarification',
-    },
-  ];
 
   useEffect(() => {
     const stored = getStoredUser();
@@ -58,9 +41,58 @@ export default function DashboardPage() {
     }
     setUser(stored);
 
+    // Fetch system status (active asset and guardrail limits)
+    api.getSystemStatus().then(setSystemStatus).catch(() => {});
+
     // Fetch user proposals
     loadRecentProposals();
   }, [router]);
+
+  const activeAsset = systemStatus?.activeAsset || 'MON';
+  const isMon = activeAsset === 'MON';
+  const perTxLimit = isMon
+    ? (systemStatus?.limits.perTxLimitMon ?? 0.1)
+    : (systemStatus?.limits.perTxLimitAusd ?? 50);
+  const dailyLimit = isMon
+    ? (systemStatus?.limits.dailyLimitMon ?? 1.0)
+    : (systemStatus?.limits.dailyLimitAusd ?? 200);
+
+  // Suggested instructions matching active backend executor and asset
+  const SAMPLE_PROMPTS = isMon
+    ? [
+        {
+          label: 'Standard Proposal (Passes Policy)',
+          prompt: 'send 0.01 MON to @riya for design work',
+          tag: 'Normal Flow',
+        },
+        {
+          label: `Exceeds Per-Tx Limit (${(perTxLimit * 2).toFixed(2)} > ${perTxLimit} MON)`,
+          prompt: `send ${(perTxLimit * 2).toFixed(2)} MON to @bob_builder for urgent server costs`,
+          tag: 'Policy Deny',
+        },
+        {
+          label: 'Ambiguous Prompt (Missing Details)',
+          prompt: 'send some mon to my friend please',
+          tag: 'Clarification',
+        },
+      ]
+    : [
+        {
+          label: 'Standard Proposal (Passes Policy)',
+          prompt: 'send 5 test AUSD to @riya for design work',
+          tag: 'Normal Flow',
+        },
+        {
+          label: `Exceeds Per-Tx Limit (${perTxLimit * 1.2} > ${perTxLimit} AUSD)`,
+          prompt: `send ${perTxLimit * 1.2} AUSD to @bob_builder for urgent server costs`,
+          tag: 'Policy Deny',
+        },
+        {
+          label: 'Ambiguous Prompt (Missing Details)',
+          prompt: 'send some money to my friend please',
+          tag: 'Clarification',
+        },
+      ];
 
   const loadRecentProposals = async () => {
     setFetchingTxs(true);
@@ -97,11 +129,26 @@ export default function DashboardPage() {
     }
   };
 
-  // Compute simulated settled spend for display
-  const settledSpent = recentProposals
-    .filter((p) => ['confirmed', 'simulated_confirmed'].includes(p.status))
+  // Compute settled balance: deduct outgoing, credit incoming
+  const baseDemoBalance = isMon ? 1.0 : 100.0;
+  const netSettledChange = recentProposals
+    .filter((p) => ['confirmed', 'simulated_confirmed', 'submitted'].includes(p.status) && p.asset === activeAsset)
+    .reduce((acc, p) => {
+      const val = parseFloat(p.display_amount || '0');
+      if (p.user_id === user?.id) {
+        return acc - val; // Sent
+      } else if (p.recipient_id === user?.id) {
+        return acc + val; // Received
+      }
+      return acc;
+    }, 0);
+
+  const walletBalance = Math.max(0, baseDemoBalance + netSettledChange).toFixed(isMon ? 4 : 2);
+
+  // Outgoing 24h spend for the current user
+  const user24hSpent = recentProposals
+    .filter((p) => p.user_id === user?.id && ['confirmed', 'simulated_confirmed', 'submitted'].includes(p.status) && p.asset === activeAsset)
     .reduce((acc, p) => acc + parseFloat(p.display_amount || '0'), 0);
-  const simulatedBalance = Math.max(0, 100 - settledSpent).toFixed(2);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -190,35 +237,45 @@ export default function DashboardPage() {
                   <Coins className="w-4 h-4 text-emerald-400" />
                   Account Balance
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-amber-950 text-amber-300 border border-amber-700/60">
-                  SIMULATED
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase border ${
+                  isMon ? 'bg-purple-950 text-purple-300 border-purple-700/80' : 'bg-amber-950 text-amber-300 border-amber-700/60'
+                }`}>
+                  {isMon ? 'MONAD TESTNET' : 'SIMULATED'}
                 </span>
               </div>
 
               <div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-                    {simulatedBalance}
+                    {walletBalance}
                   </span>
-                  <span className="text-lg font-bold text-emerald-400">AUSD</span>
+                  <span className="text-lg font-bold text-emerald-400">{activeAsset}</span>
                 </div>
                 <p className="text-xs text-gray-400 mt-1">
-                  Simulated initial 100.00 AUSD test balance · Monad Testnet demo asset
+                  {isMon
+                    ? 'Monad Testnet Native Asset · Settled via Monad relayer'
+                    : 'Simulated initial 100.00 AUSD test balance · Monad Metropolis demo asset'}
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-4 pt-3 border-t border-gray-800 text-xs text-gray-400">
                 <div>
                   <span className="text-gray-500">24h Limit:</span>{' '}
-                  <strong className="text-gray-200">200.00 AUSD</strong>
+                  <strong className="text-gray-200">{dailyLimit} {activeAsset}</strong>
                 </div>
                 <div>
                   <span className="text-gray-500">Per-Tx Limit:</span>{' '}
-                  <strong className="text-gray-200">50.00 AUSD</strong>
+                  <strong className="text-gray-200">{perTxLimit} {activeAsset}</strong>
                 </div>
+                {isMon && (
+                  <div>
+                    <span className="text-gray-500">Hard Cap:</span>{' '}
+                    <strong className="text-purple-300">{systemStatus?.limits.maxTestnetTransferMon ?? 0.2} MON</strong>
+                  </div>
+                )}
                 <div>
                   <span className="text-gray-500">24h Spent:</span>{' '}
-                  <strong className="text-indigo-400">{settledSpent.toFixed(2)} AUSD</strong>
+                  <strong className="text-indigo-400">{user24hSpent.toFixed(isMon ? 4 : 2)} {activeAsset}</strong>
                 </div>
               </div>
             </div>
@@ -288,7 +345,7 @@ export default function DashboardPage() {
                 rows={3}
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                placeholder="e.g. send 5 test AUSD to @riya for design work"
+                placeholder={isMon ? "e.g. send 0.01 MON to @riya for design work" : "e.g. send 5 test AUSD to @riya for design work"}
                 className="w-full p-4 rounded-xl bg-gray-950 border border-gray-800 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 resize-none font-sans"
               />
             </div>
@@ -328,7 +385,7 @@ export default function DashboardPage() {
               </div>
               <p className="text-gray-300">{clarificationMessage}</p>
               <p className="text-gray-500 text-[11px]">
-                Tip: Include amount (e.g. 5 AUSD) and recipient handle (e.g. @riya) in your prompt.
+                Tip: Include amount (e.g. {isMon ? '0.01 MON' : '5 AUSD'}) and recipient handle (e.g. @riya) in your prompt.
               </p>
             </div>
           )}
@@ -365,37 +422,53 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="divide-y divide-gray-800/80">
-              {recentProposals.map((item) => (
-                <div
-                  key={item.id}
-                  onClick={() => {
-                    if (['confirmed', 'simulated_confirmed', 'submitted'].includes(item.status)) {
-                      router.push(`/receipt/${item.id}`);
-                    } else {
-                      router.push(`/proposal/${item.id}`);
-                    }
-                  }}
-                  className="py-3.5 flex items-center justify-between gap-4 hover:bg-gray-800/40 px-2 rounded-lg cursor-pointer transition"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-sm text-white">
-                        {item.display_amount} {item.asset}
-                      </span>
-                      <span className="text-xs text-gray-400">to @{item.recipient_handle}</span>
-                      {getStatusBadge(item.status)}
+              {recentProposals.map((item) => {
+                const isSender = item.user_id === user?.id;
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      if (['confirmed', 'simulated_confirmed', 'submitted'].includes(item.status)) {
+                        router.push(`/receipt/${item.id}`);
+                      } else {
+                        router.push(`/proposal/${item.id}`);
+                      }
+                    }}
+                    className="py-3.5 flex items-center justify-between gap-4 hover:bg-gray-800/40 px-2 rounded-lg cursor-pointer transition group"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`font-bold text-sm ${isSender ? 'text-white' : 'text-emerald-400'}`}>
+                          {isSender ? '' : '+'}{item.display_amount} {item.asset}
+                        </span>
+                        {isSender ? (
+                          <span className="text-xs text-gray-400">to @{item.recipient_handle}</span>
+                        ) : (
+                          <span className="text-xs text-emerald-300">from @{item.sender_handle || 'sender'}</span>
+                        )}
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          isSender ? 'bg-gray-800 text-gray-300' : 'bg-emerald-950 text-emerald-300 border border-emerald-800/80'
+                        }`}>
+                          {isSender ? 'SENT' : 'RECEIVED'}
+                        </span>
+                        {getStatusBadge(item.status)}
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        {item.purpose || 'No purpose specified'} ·{' '}
+                        <span className="font-mono text-[11px]">
+                          {new Date(item.created_at).toLocaleString()}
+                        </span>
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-400">
-                      {item.purpose || 'No purpose specified'} ·{' '}
-                      <span className="font-mono text-[11px]">
-                        {new Date(item.created_at).toLocaleString()}
-                      </span>
-                    </p>
-                  </div>
 
-                  <ArrowUpRight className="w-4 h-4 text-gray-500 group-hover:text-white transition" />
-                </div>
-              ))}
+                    {isSender ? (
+                      <ArrowUpRight className="w-4 h-4 text-gray-500 group-hover:text-white transition" />
+                    ) : (
+                      <ArrowDownLeft className="w-4 h-4 text-emerald-400 group-hover:text-white transition" />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

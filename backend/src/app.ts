@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import { logger } from './utils/logger';
+import { env } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
 import healthRouter from './routes/health';
 import chainRouter from './routes/chain';
@@ -14,9 +15,35 @@ import systemRouter from './routes/system';
 
 const app = express();
 
+// Trust reverse proxy (e.g. Nginx, Cloudflare, Fly, Railway) so rate limiters use real client IP
+app.set('trust proxy', 1);
+
 // Middlewares
 app.use(helmet());
-app.use(cors());
+
+// CORS allowlist from FRONTEND_ORIGIN (comma-separated, no wildcard in production)
+const allowedOrigins = env.FRONTEND_ORIGIN
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow curl / server-to-server requests without Origin header
+      if (!origin) return callback(null, true);
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      if (env.NODE_ENV !== 'production') {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(
   pinoHttp({

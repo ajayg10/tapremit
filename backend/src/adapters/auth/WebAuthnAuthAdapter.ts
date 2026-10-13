@@ -53,7 +53,10 @@ export class WebAuthnAuthAdapter implements AuthAdapter {
       throw { status: 400, message: 'Verification failed' };
     }
 
-    const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+    const regInfo = verification.registrationInfo as any;
+    const credentialID = regInfo.credentialID || regInfo.credential?.id || regInfo.id;
+    const credentialPublicKey = regInfo.credentialPublicKey || regInfo.credential?.publicKey || regInfo.publicKey;
+    const counter = regInfo.counter ?? regInfo.credential?.counter ?? 0;
 
     const user = usersRepo.create({
       handle,
@@ -63,8 +66,8 @@ export class WebAuthnAuthAdapter implements AuthAdapter {
 
     credentialsRepo.create({
       user_id: user.id,
-      credential_id: Buffer.from(credentialID).toString('base64url'),
-      public_key: Buffer.from(credentialPublicKey).toString('base64url'),
+      credential_id: typeof credentialID === 'string' ? credentialID : Buffer.from(credentialID).toString('base64url'),
+      public_key: typeof credentialPublicKey === 'string' ? credentialPublicKey : Buffer.from(credentialPublicKey).toString('base64url'),
       counter,
       transports: null,
     });
@@ -86,8 +89,8 @@ export class WebAuthnAuthAdapter implements AuthAdapter {
       options = await generateAuthenticationOptions({
         rpID: env.WEBAUTHN_RP_ID,
         allowCredentials: userCreds.map(c => ({
-          id: new Uint8Array(Buffer.from(c.credential_id, 'base64url')),
-          type: 'public-key',
+          id: c.credential_id,
+          transports: c.transports ? JSON.parse(c.transports) : undefined,
         })),
         userVerification: 'preferred',
       });
@@ -115,10 +118,10 @@ export class WebAuthnAuthAdapter implements AuthAdapter {
         expectedOrigin: env.WEBAUTHN_ORIGIN,
         expectedRPID: env.WEBAUTHN_RP_ID,
         credential: {
-          id: new Uint8Array(Buffer.from(cred.credential_id, 'base64url')),
+          id: cred.credential_id,
           publicKey: new Uint8Array(Buffer.from(cred.public_key, 'base64url')),
           counter: cred.counter,
-        }
+        } as any,
       });
     } catch (e: any) {
       throw { status: 400, message: e.message };

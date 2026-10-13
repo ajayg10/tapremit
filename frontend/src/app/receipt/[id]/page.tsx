@@ -220,7 +220,7 @@ export default function ReceiptTimelinePage() {
               </div>
               {!isSimulated && (
                 <a
-                  href={`https://testnet.monadscan.com/tx/${proposal.execution_tx_hash}`}
+                  href={`https://testnet.monadvision.com/tx/${proposal.execution_tx_hash}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800 text-indigo-300 hover:text-white font-medium text-xs transition"

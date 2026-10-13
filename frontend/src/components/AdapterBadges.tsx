@@ -29,6 +29,12 @@ export default function AdapterBadges() {
     };
   }, []);
 
+  const isMon = (status?.activeAsset === 'MON') || (!status?.activeAsset && status?.adapters?.executor !== 'mock');
+  const asset = status?.activeAsset || (isMon ? 'MON' : 'AUSD');
+  const perTx = isMon ? (status?.limits?.perTxLimitMon ?? 0.1) : (status?.limits?.perTxLimitAusd ?? 50);
+  const daily = isMon ? (status?.limits?.dailyLimitMon ?? 1.0) : (status?.limits?.dailyLimitAusd ?? 200);
+  const maxCap = isMon ? (status?.limits?.maxTestnetTransferMon ?? 0.2) : null;
+
   return (
     <div className="w-full bg-[#0d121f] border-b border-gray-800 text-xs py-2 px-4">
       <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2">
@@ -56,9 +62,18 @@ export default function AdapterBadges() {
 
         {/* Network & Limits */}
         <div className="flex items-center gap-3 text-gray-400">
-          <span className="hidden sm:inline-flex items-center gap-1">
+          <span className="hidden sm:inline-flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-monad-light" />
-            Policy Limits: max <span className="text-white font-medium">{status?.limits.perTxLimitAusd ?? 50} AUSD/tx</span> · <span className="text-white font-medium">{status?.limits.dailyLimitAusd ?? 200} AUSD/day</span>
+            <span>Policy Limits:</span>
+            <span className="text-white font-medium">max {perTx} {asset}/tx</span>
+            <span>·</span>
+            <span className="text-white font-medium">{daily} {asset}/day</span>
+            {maxCap !== null && (
+              <>
+                <span>·</span>
+                <span className="text-purple-300 font-medium">max cap {maxCap} {asset}</span>
+              </>
+            )}
           </span>
           <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40">
             Monad Testnet (10143)

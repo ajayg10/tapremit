@@ -68,7 +68,7 @@ router.post('/register/finish', async (req: Request, res: Response, next: NextFu
   try {
     const { handle, response } = registerFinishSchema.parse(req.body);
     const user = await authService.registerFinish(handle.toLowerCase(), response);
-    const token = jwt.sign({ sub: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRY, algorithm: 'HS256' });
+    const token = jwt.sign({ sub: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRY as any, algorithm: 'HS256' });
     res.json({ token });
   } catch (error: any) {
     next(error);
@@ -95,7 +95,7 @@ router.post('/login/finish', async (req: Request, res: Response, next: NextFunct
     const { handle, response } = req.body;
     if (!handle || !response) throw { status: 400, message: 'Invalid request' };
     const user = await authService.loginFinish(handle.toLowerCase(), response);
-    const token = jwt.sign({ sub: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRY, algorithm: 'HS256' });
+    const token = jwt.sign({ sub: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRY as any, algorithm: 'HS256' });
     res.json({ token });
   } catch (error) {
     next({ status: 400, message: 'Invalid credentials or verification failed' });

@@ -8,9 +8,14 @@ import { auditRepo } from './audit.repository';
 import { computeCanonicalProposalHash } from '../services/proposal.service';
 import { env } from '../config/env';
 
-function getOrGenerateAddress(envAddress?: string): string {
+function getOrGenerateAddress(envAddress?: string, varName: string = 'wallet'): string {
   if (envAddress && envAddress.startsWith('0x') && envAddress.length === 42) {
     return envAddress;
+  }
+  if (env.NODE_ENV === 'production' || env.SEED_ON_BOOT) {
+    throw new Error(
+      `Missing or invalid ${varName}. In production / SEED_ON_BOOT, you must explicitly set ${varName} to a valid 0x address. Random wallet generation is disallowed.`
+    );
   }
   return privateKeyToAccount(generatePrivateKey()).address;
 }
@@ -20,10 +25,10 @@ export function seedDemoData() {
 
   console.log('🌱 Seeding demo accounts and contacts...');
 
-  const aliceWallet = getOrGenerateAddress(env.SEED_ALICE_WALLET);
-  const riyaWallet = getOrGenerateAddress(env.SEED_RIYA_WALLET);
-  const bobWallet = getOrGenerateAddress(env.SEED_BOB_WALLET);
-  const charlieWallet = getOrGenerateAddress(env.SEED_CHARLIE_WALLET);
+  const aliceWallet = getOrGenerateAddress(env.SEED_ALICE_WALLET, 'SEED_ALICE_WALLET');
+  const riyaWallet = getOrGenerateAddress(env.SEED_RIYA_WALLET, 'SEED_RIYA_WALLET');
+  const bobWallet = getOrGenerateAddress(env.SEED_BOB_WALLET, 'SEED_BOB_WALLET');
+  const charlieWallet = getOrGenerateAddress(env.SEED_CHARLIE_WALLET, 'SEED_CHARLIE_WALLET');
 
   // 1. Alice (Primary demo user / sender)
   let alice = usersRepo.getByHandle('alice_agent');

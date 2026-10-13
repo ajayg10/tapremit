@@ -33,7 +33,10 @@ const envSchema = z.object({
   SEED_RIYA_WALLET: z.string().optional(),
   SEED_BOB_WALLET: z.string().optional(),
   SEED_CHARLIE_WALLET: z.string().optional(),
-  DB_PATH: z.string().default('./data/tapremit.db').transform((val) => isTestEnv ? ':memory:' : val),
+  DATABASE_PATH: z.string().optional(),
+  DB_PATH: z.string().default('./data/tapremit.db').transform((val) => isTestEnv ? ':memory:' : (process.env.DATABASE_PATH || val)),
+  FRONTEND_ORIGIN: z.string().default('http://localhost:3000,http://localhost:3001'),
+  SEED_ON_BOOT: z.enum(['true', 'false']).default('false').transform((val) => val === 'true'),
   DEBUG_SQL: z.enum(['true', 'false']).default('false').transform((val) => val === 'true'),
   MOCK_AUTH: z.enum(['true', 'false']).default('true').transform((val) => val === 'true'),
   WEBAUTHN_RP_ID: z.string().default('localhost'),
@@ -52,9 +55,20 @@ const envSchema = z.object({
 }).refine(data => data.MOCK_AUTH === true || data.JWT_SECRET.length >= 32, {
   message: "JWT_SECRET must be at least 32 characters when MOCK_AUTH is false",
   path: ["JWT_SECRET"]
+}).refine(data => data.NODE_ENV !== 'production' || (!!data.JWT_SECRET && data.JWT_SECRET.length >= 32 && data.JWT_SECRET !== 'mock_secret_for_development_only_123'), {
+  message: "In production (NODE_ENV=production), JWT_SECRET must be explicitly set and at least 32 characters long",
+  path: ["JWT_SECRET"]
 }).refine(data => data.MOCK_PAYMENT_EXECUTOR === true || !!data.RELAYER_PRIVATE_KEY, {
   message: "RELAYER_PRIVATE_KEY is required when MOCK_PAYMENT_EXECUTOR is false",
   path: ["RELAYER_PRIVATE_KEY"]
+}).refine(data => data.NODE_ENV !== 'production' || !data.FRONTEND_ORIGIN.split(',').map(s => s.trim()).includes('*'), {
+  message: "Wildcard CORS origin '*' is disallowed in production. Specify exact comma-separated origins in FRONTEND_ORIGIN.",
+  path: ["FRONTEND_ORIGIN"]
+}).refine(data => !data.SEED_ON_BOOT || (
+  !!data.SEED_ALICE_WALLET && !!data.SEED_RIYA_WALLET && !!data.SEED_BOB_WALLET && !!data.SEED_CHARLIE_WALLET
+), {
+  message: "SEED_ON_BOOT requires SEED_ALICE_WALLET, SEED_RIYA_WALLET, SEED_BOB_WALLET, and SEED_CHARLIE_WALLET to be set. Random wallet generation is disallowed when seeding on boot.",
+  path: ["SEED_ON_BOOT"]
 });
 
 const _env = envSchema.safeParse(process.env);

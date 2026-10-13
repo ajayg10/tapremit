@@ -329,8 +329,20 @@ export const proposalsRepo = {
 
 export function toPublicProposal(proposal: Proposal) {
   const { execution_signed_tx, ...safeProposal } = proposal;
+  let sender_handle: string | undefined;
+  try {
+    if (proposal.user_id) {
+      const sender = db.prepare('SELECT handle FROM users WHERE id = ?').get(proposal.user_id) as { handle: string } | undefined;
+      if (sender) {
+        sender_handle = sender.handle;
+      }
+    }
+  } catch {
+    // fallback gracefully
+  }
   return {
     ...safeProposal,
+    sender_handle,
     policy_reasons:
       typeof safeProposal.policy_reasons === 'string'
         ? JSON.parse(safeProposal.policy_reasons || '[]')

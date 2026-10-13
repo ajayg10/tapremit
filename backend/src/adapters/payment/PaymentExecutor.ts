@@ -1,7 +1,7 @@
 import { Proposal } from '../../db/proposals.repository';
 
 export interface ExecutionReceipt {
-  status: 'confirmed' | 'simulated_confirmed' | 'failed' | 'unknown';
+  status: 'confirmed' | 'simulated_confirmed' | 'failed' | 'unknown' | 'submitted';
   txHash: string;
   network: string;
   asset: string;

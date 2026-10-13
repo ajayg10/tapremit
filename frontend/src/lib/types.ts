@@ -1,4 +1,6 @@
 export interface SystemStatus {
+  isRealChain?: boolean;
+  activeAsset?: string;
   adapters: {
     auth: 'mock' | 'webauthn';
     llm: 'mock' | 'real';
@@ -8,12 +10,20 @@ export interface SystemStatus {
   limits: {
     perTxLimitAusd: number;
     dailyLimitAusd: number;
+    perTxLimitMon?: number;
+    dailyLimitMon?: number;
+    globalDailyLimitMon?: number;
+    maxTestnetTransferMon?: number;
+    pauseRealTransfers?: boolean;
     proposalTtlSeconds: number;
   };
   network: {
     name: string;
     chainId: number;
     asset: string;
+  };
+  relayer?: {
+    address: string;
   };
 }
 
@@ -63,6 +73,10 @@ export interface Proposal {
   policy_reasons: RuleOutcome[];
   idempotency_key: string | null;
   expires_at: string;
+  sender_handle?: string;
+  execution_mode?: 'mock' | 'testnet';
+  execution_substate?: string | null;
+  execution_nonce?: number | null;
   execution_tx_hash: string | null;
   execution_error: string | null;
   created_at: string;
