@@ -86,6 +86,7 @@ export const auditService = {
         status: proposal.status,
         recipient_handle: proposal.recipient_handle,
         amount: proposal.display_amount,
+        display_amount: proposal.display_amount,
         asset: proposal.asset,
         network: proposal.network,
         proposal_hash: proposal.proposal_hash,

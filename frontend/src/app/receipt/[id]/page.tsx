@@ -151,7 +151,7 @@ export default function ReceiptTimelinePage() {
             <div className="p-3.5 rounded-xl bg-gray-950 border border-gray-800">
               <span className="text-[11px] text-gray-500 uppercase font-semibold">Amount</span>
               <div className="text-lg font-bold text-white mt-0.5">
-                {proposal.display_amount} <span className="text-emerald-400">{proposal.asset}</span>
+                {proposal.display_amount || proposal.amount} <span className="text-emerald-400">{proposal.asset}</span>
               </div>
             </div>
 
