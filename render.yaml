@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: tapremit-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PATH
+        value: ./data/tapremit.db
+      - key: MOCK_CHAIN
+        value: "false"
+      - key: MOCK_PAYMENT_EXECUTOR
+        value: "false"
+      - key: MOCK_AUTH
+        value: "true"
+      - key: MOCK_LLM
+        value: "true"
+      - key: RPC_PRIMARY_URL
+        value: https://testnet-rpc.monad.xyz
+      - key: RPC_FALLBACK_URL
+        value: https://rpc.ankr.com/monad_testnet
+      - key: EXPLORER_BASE_URL
+        value: https://testnet.monadvision.com
+      - key: RELAYER_ADDRESS
+        value: 0x836DF4117d96B860939627B7288a0e5C51fEFD53
+      - key: PAUSE_REAL_TRANSFERS
+        value: "false"
+      - key: PER_TX_LIMIT_MON
+        value: "0.05"
+      - key: DAILY_LIMIT_MON
+        value: "0.2"
+      - key: GLOBAL_DAILY_LIMIT_MON
+        value: "1.0"
+      - key: MAX_TESTNET_TRANSFER_MON
+        value: "0.1"
+      - key: SEED_ON_BOOT
+        value: "true"
+      - key: SEED_ALICE_WALLET
+        value: "0x1111111111111111111111111111111111111111"
+      - key: SEED_RIYA_WALLET
+        value: "0x2222222222222222222222222222222222222222"
+      - key: SEED_BOB_WALLET
+        value: "0x3333333333333333333333333333333333333333"
+      - key: SEED_CHARLIE_WALLET
+        value: "0x4444444444444444444444444444444444444444"
+      - key: JWT_EXPIRY
+        value: "2h"
+      # Secure secrets (must be filled in Render Dashboard):
+      - key: JWT_SECRET
+        generateValue: true
+      - key: RELAYER_PRIVATE_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
