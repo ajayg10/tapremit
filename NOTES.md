@@ -1,7 +1,8 @@
 # NOTES.md (Living Memory)
 
 ## 1. Current status
-Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit Correctness Gaps), Phase 4 (Monad Payment Executor & Deployment Readiness), and Phase UI (Judge Web UI with live MON limits, dynamic sync, and verified browser E2E testing) completed and verified (87 backend tests passing, frontend cleanly compiled with 0 TypeScript errors). Live on-chain settlement on Monad testnet verified with real transaction hash and MonadVision block explorer integration.
+Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit Correctness Gaps), Phase 4 (Monad Payment Executor & Deployment Readiness), and Phase UI (Judge Web UI) completed and verified (87 backend tests passing, frontend cleanly compiled with 0 TypeScript errors). Live on-chain settlement on Monad testnet verified with real transaction hash and MonadVision block explorer integration.
+Backend is publicly deployed and live on Render at `https://tapremit.onrender.com` (Monad Testnet chainId 10143, health check 200 OK, active demo accounts seeded on boot). Ready for frontend deployment and integration via `NEXT_PUBLIC_API_URL=https://tapremit.onrender.com`.
 
 ## 2. Phase log
 - [x] Phase 0: Scaffold
@@ -12,6 +13,7 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 - [x] Phase G: Approval and audit correctness gaps (CAS transitions, approval-time policy recheck, denied vs rejected separation, audit hash chain, allowlist redaction)
 - [x] Phase 4: Monad testnet native transfer executor, nonce management, robust receipt polling, finality verification, startup sweep, and deployment readiness
 - [x] Phase UI: Full judge-ready Web UI (Sign in, Dashboard with live MON limits, Proposal Review, Receipt & Timeline, dynamic sent/received history)
+- [x] Phase Deploy: Backend publicly deployed to Render (`https://tapremit.onrender.com`) with live Monad testnet integration
 - [ ] Phase 5: Aurora Intents adapter
 - [ ] Phase 6: History and live status
 - [ ] Phase 7: Hardening and docs
