@@ -10,6 +10,7 @@ import usersRouter from './routes/users';
 import authRouter from './routes/auth';
 import agentRouter from './routes/agent';
 import proposalsRouter from './routes/proposals';
+import systemRouter from './routes/system';
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use(
 // Routes
 app.use('/health', healthRouter);
 app.use('/chain', chainRouter);
+app.use('/system', systemRouter);
 app.use('/users', usersRouter);
 app.use('/auth', authRouter);
 app.use('/agent', agentRouter);

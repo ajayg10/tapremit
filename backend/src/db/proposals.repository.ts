@@ -99,6 +99,12 @@ export const proposalsRepo = {
     return db.prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Proposal | undefined;
   },
 
+  listByUserId: (userId: string, limit: number = 20): Proposal[] => {
+    return db
+      .prepare('SELECT * FROM proposals WHERE user_id = ? ORDER BY rowid DESC LIMIT ?')
+      .all(userId, limit) as Proposal[];
+  },
+
   getByIdempotencyKey: (key: string): Proposal | undefined => {
     return db.prepare('SELECT * FROM proposals WHERE idempotency_key = ?').get(key) as Proposal | undefined;
   },

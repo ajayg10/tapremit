@@ -1,7 +1,7 @@
 # NOTES.md (Living Memory)
 
 ## 1. Current status
-Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), and Phase G (Approval & Audit Correctness Gaps) done and verified (34 tests passing across 5 suites). Policy engine re-evaluated atomically at approval time, CAS state transitions, separated `denied` vs `rejected` states, audit allowlist redaction, and SQLite append-only tamper-evident audit hash chain verified.
+Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit Correctness Gaps), and Phase UI (Minimal Judge Web UI) completed and verified (37 tests passing across backend and frontend suites). Full 4-screen flow implemented: Sign in with 1-click demo accounts, Dashboard with simulated balance & agent prompt box, Proposal review with live TTL countdown & policy rules, Receipt with prominent SIMULATED badges & cryptographic audit timeline.
 
 ## 2. Phase log
 - [x] Phase 0: Scaffold
@@ -10,6 +10,7 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), and Phase G (Approval & A
 - [x] Phase 3: Auth (passkey)
 - [x] Phase Agent: AI Agent proposal flow, deterministic policy engine, proposal hashing, approval state machine, append-only audit trail
 - [x] Phase G: Approval and audit correctness gaps (CAS transitions, approval-time policy recheck, denied vs rejected separation, audit hash chain, allowlist redaction)
+- [x] Phase UI: Minimal judge-ready Web UI (Sign in, Dashboard, Proposal Review, Receipt & Timeline)
 - [ ] Phase 4: AUSD balance and transfer
 - [ ] Phase 5: Aurora Intents adapter
 - [ ] Phase 6: History and live status
@@ -22,6 +23,7 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), and Phase G (Approval & A
 - **Mainnet reference** (NOT used by this project): chain id 143, https://rpc.monad.xyz
 
 ## 4. Open questions and TODOs
+- UI Phase missing read endpoints to confirm with user: `GET /proposals` (list user proposals for dashboard) and `GET /system/status` (adapter configuration flags for persistent badges).
 - AUSD testnet address and decimals.
 - Mera SDK package and usage.
 - Aurora Intents testnet support.
@@ -124,10 +126,18 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), and Phase G (Approval & A
   - **Request**: `{ "phone": "+1234567890" }` or `{ "handle": "alice" }`
   - **Response**: `{ "handle": "alice", "display_name": "Alice" }`
 
+- **GET /system/status**
+  - **Auth**: None
+  - **Response**: `{ "adapters": { "auth": "mock", "llm": "mock", "executor": "mock", "chain": "mock" }, "limits": { "perTxLimitAusd": 50, "dailyLimitAusd": 200, "proposalTtlSeconds": 900 }, "network": { "name": "Monad Testnet", "chainId": 10143, "asset": "AUSD" } }`
+
 - **POST /agent/propose**
   - **Auth**: Required (JWT Bearer)
   - **Request**: `{ "instruction": "send 5 test AUSD to @riya for design", "idempotency_key": "optional-key" }`
   - **Response**: `{ "type": "PROPOSAL", "proposal": { "id": "...", "amount": "5000000", "display_amount": "5", "asset": "AUSD", "status": "awaiting_approval", "proposal_hash": "...", "policy_decision": "REQUIRE_APPROVAL", "policy_reasons": [...] }, "provider": "MockLLM...", "isMock": true }` or `{ "type": "CLARIFICATION", "message": "...", "provider": "...", "isMock": true }`
+
+- **GET /proposals**
+  - **Auth**: Required (JWT Bearer)
+  - **Response**: `{ "proposals": [{ "id": "...", "amount": "...", "display_amount": "...", "asset": "AUSD", "status": "...", "recipient_handle": "..." }] }`
 
 - **GET /proposals/:id**
   - **Auth**: Required (JWT Bearer, sender only)
