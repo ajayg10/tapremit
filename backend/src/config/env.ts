@@ -14,7 +14,7 @@ const envSchema = z.object({
   PORT: z.string().default('3000').transform((val) => parseInt(val, 10)),
   NODE_ENV: z.enum(['development', 'production', 'test']).default(isTestEnv ? 'test' : 'development'),
   MOCK_CHAIN: z.enum(['true', 'false']).default('true').transform((val) => val === 'true'),
-  MONAD_RPC_URL: z.string().url().optional(),
+  MONAD_RPC_URL: z.string().url().default('https://testnet-rpc.monad.xyz'),
   RPC_PRIMARY_URL: z.string().url().default('https://testnet-rpc.monad.xyz'),
   RPC_FALLBACK_URL: z.string().url().default('https://rpc.ankr.com/monad_testnet'),
   EXPLORER_BASE_URL: z.string().url().default('https://testnet.monadvision.com'),

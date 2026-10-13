@@ -23,6 +23,8 @@ services:
         value: "true"
       - key: MOCK_LLM
         value: "true"
+      - key: MONAD_RPC_URL
+        value: https://testnet-rpc.monad.xyz
       - key: RPC_PRIMARY_URL
         value: https://testnet-rpc.monad.xyz
       - key: RPC_FALLBACK_URL
