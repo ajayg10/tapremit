@@ -31,8 +31,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       if (res.status === 401) {
         removeAuthToken();
       }
-      const message = data?.error || data?.message || `Request failed with status ${res.status}`;
-      throw new Error(message);
+      let message = data?.error || data?.message;
+      if (res.status === 503 && !message) {
+        message = 'Transfers are currently paused or relayer balance is unavailable. Please try again later.';
+      } else if (res.status === 409 && !message) {
+        message = 'This proposal has already been processed or approved.';
+      }
+      throw new Error(message || `Request failed with status ${res.status}`);
     }
 
     return data as T;
@@ -104,11 +109,16 @@ export const api = {
     });
   },
 
-  approveProposal: async (id: string, proposalHash?: string): Promise<ApproveResponse> => {
+  approveProposal: async (
+    id: string,
+    proposalHash?: string,
+    confirmNewRecipient?: boolean
+  ): Promise<ApproveResponse> => {
     return request<ApproveResponse>(`/proposals/${id}/approve`, {
       method: 'POST',
       body: JSON.stringify({
         ...(proposalHash ? { proposal_hash: proposalHash } : {}),
+        ...(confirmNewRecipient !== undefined ? { confirm_new_recipient: confirmNewRecipient } : {}),
       }),
     });
   },

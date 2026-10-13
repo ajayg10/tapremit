@@ -19,7 +19,9 @@ import {
   AlertTriangle,
   Lock,
   Ban,
-  Clock
+  Clock,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export default function ProposalReviewPage() {
@@ -33,6 +35,8 @@ export default function ProposalReviewPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmNewRecipient, setConfirmNewRecipient] = useState<boolean>(false);
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
 
   useEffect(() => {
     const stored = getStoredUser();
@@ -47,9 +51,11 @@ export default function ProposalReviewPage() {
     }
   }, [proposalId, router]);
 
-  const loadProposal = async (id: string) => {
+  const loadProposal = async (id: string, preserveError: boolean = false) => {
     setLoading(true);
-    setError(null);
+    if (!preserveError) {
+      setError(null);
+    }
     try {
       const data = await api.getProposal(id);
       setProposal(data);
@@ -67,19 +73,29 @@ export default function ProposalReviewPage() {
     }
   };
 
+  const requiresFirstTimeConfirmation = proposal?.policy_reasons?.some(
+    (r) => r.rule === 'KNOWN_CONTACT_POLICY' && r.decision === 'REQUIRE_APPROVAL'
+  ) || false;
+
   const handleApprove = async () => {
     if (!proposal) return;
     setActionLoading(true);
     setError(null);
 
+    if (requiresFirstTimeConfirmation && !confirmNewRecipient) {
+      setError('Please check the confirmation box: "I confirm this is a first-time recipient" before approving.');
+      setActionLoading(false);
+      return;
+    }
+
     try {
-      // Approve sends the canonical proposal_hash displayed on screen
-      await api.approveProposal(proposal.id, proposal.proposal_hash);
+      // Approve sends canonical proposal_hash and confirm_new_recipient flag
+      await api.approveProposal(proposal.id, proposal.proposal_hash, confirmNewRecipient);
       router.push(`/receipt/${proposal.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to approve proposal.');
-      // Refresh proposal to get updated state (e.g. if denied by policy re-check)
-      loadProposal(proposal.id);
+      // Refresh proposal without wiping the error banner
+      loadProposal(proposal.id, true);
     } finally {
       setActionLoading(false);
     }
@@ -262,9 +278,26 @@ export default function ProposalReviewPage() {
               <span className="text-xs text-gray-500 uppercase font-semibold tracking-wider">Resolved Recipient</span>
               <div className="flex items-center gap-2 pt-1">
                 <UserCheck className="w-5 h-5 text-indigo-400" />
-                <div>
+                <div className="flex-1 min-w-0">
                   <div className="font-bold text-white text-sm">@{proposal.recipient_handle}</div>
                   <div className="text-xs text-gray-400">{recipientName || 'Resolved User'}</div>
+                  {proposal.recipient_wallet && (
+                    <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-gray-400 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 w-fit">
+                      <span>{proposal.recipient_wallet.slice(0, 6)}...{proposal.recipient_wallet.slice(-4)}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(proposal.recipient_wallet!);
+                          setCopiedAddress(true);
+                          setTimeout(() => setCopiedAddress(false), 2000);
+                        }}
+                        title="Copy recipient address"
+                        className="text-gray-400 hover:text-white transition"
+                      >
+                        {copiedAddress ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -300,6 +333,26 @@ export default function ProposalReviewPage() {
             reasons={proposal.policy_reasons || []}
           />
 
+          {/* Required First-Time Recipient Confirmation Checkbox */}
+          {requiresFirstTimeConfirmation && isAwaiting && (
+            <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-800/80 flex items-start gap-3">
+              <input
+                type="checkbox"
+                id="confirm_first_time"
+                checked={confirmNewRecipient}
+                onChange={(e) => {
+                  setConfirmNewRecipient(e.target.checked);
+                  if (e.target.checked) setError(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-amber-600 bg-gray-900 text-amber-500 focus:ring-amber-500 cursor-pointer"
+              />
+              <label htmlFor="confirm_first_time" className="text-xs text-amber-200 cursor-pointer select-none leading-relaxed">
+                <span className="font-bold text-amber-300 block mb-0.5">I confirm this is a first-time recipient</span>
+                You have not transferred funds to this recipient before. Please verify the recipient handle and wallet address before authorizing the transaction.
+              </label>
+            </div>
+          )}
+
           {/* Action buttons (only if awaiting approval) */}
           {isAwaiting && (
             <div className="pt-4 border-t border-gray-800 flex flex-col sm:flex-row items-center gap-3">
@@ -316,15 +369,15 @@ export default function ProposalReviewPage() {
               <button
                 type="button"
                 onClick={handleApprove}
-                disabled={actionLoading}
-                className="w-full sm:w-2/3 py-3 px-4 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white shadow-lg shadow-emerald-600/25 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                disabled={actionLoading || (requiresFirstTimeConfirmation && !confirmNewRecipient)}
+                className="w-full sm:w-2/3 py-3 px-4 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white shadow-lg shadow-emerald-600/25 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {actionLoading ? (
                   <span>Executing Payment...</span>
                 ) : (
                   <>
                     <CheckCircle className="w-4 h-4" />
-                    Approve & Sign Hash ({proposal.display_amount} AUSD)
+                    Approve & Sign Hash ({proposal.display_amount} {proposal.asset})
                   </>
                 )}
               </button>

@@ -106,11 +106,31 @@ export default function DashboardPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'simulated_confirmed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800">
+            <CheckCircle2 className="w-3 h-3 text-amber-400" />
+            SIMULATED CONFIRMED
+          </span>
+        );
       case 'confirmed':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
             <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-            SIMULATED CONFIRMED
+            MONAD FINALIZED
+          </span>
+        );
+      case 'submitted':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-800 animate-pulse">
+            <Clock className="w-3 h-3 text-blue-400" />
+            SUBMITTED
+          </span>
+        );
+      case 'failed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-800">
+            <XCircle className="w-3 h-3 text-rose-400" />
+            FAILED
           </span>
         );
       case 'awaiting_approval':

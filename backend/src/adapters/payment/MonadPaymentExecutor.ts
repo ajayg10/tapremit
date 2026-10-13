@@ -600,8 +600,8 @@ export class MonadPaymentExecutor implements PaymentExecutor {
         // Node accepted broadcast! Increment local nonce
         this.nextNonce = assignedNonce + 1;
         this.isNonceAmbiguous = false;
-        proposalsRepo.updateExecutionSubstate(proposal.id, 'broadcasted_unknown');
-        this.auditSubstateChange(proposal.id, 'awaiting_broadcast', 'broadcasted_unknown', assignedNonce, txHash);
+        proposalsRepo.updateExecutionSubstate(proposal.id, 'broadcast_accepted');
+        this.auditSubstateChange(proposal.id, 'awaiting_broadcast', 'broadcast_accepted', assignedNonce, txHash);
       } catch (broadcastErr: any) {
         const sanitized = sanitizeError(broadcastErr);
         const classification = classifyBroadcastError(broadcastErr);
@@ -730,7 +730,7 @@ export class MonadPaymentExecutor implements PaymentExecutor {
       explorerLink: `${env.EXPLORER_BASE_URL}/tx/${txHash}`,
       details: this.isNonceAmbiguous
         ? 'Broadcast returned an ambiguous result; transfer is pending on-chain reconciliation.'
-        : 'Transaction broadcasted; awaiting finality confirmation.',
+        : 'Transaction broadcast accepted by node; awaiting finality confirmation.',
     };
   }
 
@@ -777,8 +777,9 @@ export class MonadPaymentExecutor implements PaymentExecutor {
     notFoundWindowMs: number
   ): Promise<ExecutionReceipt> {
     const startTime = Date.now();
+    const initialProp = proposalsRepo.getById(proposalId);
+    let currentSubstate: ProposalExecutionSubstate = initialProp?.execution_substate || 'broadcast_accepted';
     let seenReceipt: any = null;
-    let currentSubstate: ProposalExecutionSubstate = 'broadcasted_unknown';
     const pollIntervalMs = 1000;
 
     while (Date.now() - startTime < timeoutMs) {
@@ -805,11 +806,12 @@ export class MonadPaymentExecutor implements PaymentExecutor {
       } else if (receipt) {
         if (!seenReceipt) {
           seenReceipt = receipt;
+          const fromSub = currentSubstate;
           currentSubstate = 'included_pending_finality';
           proposalsRepo.updateExecutionSubstate(proposalId, 'included_pending_finality');
           this.auditSubstateChange(
             proposalId,
-            'broadcasted_unknown',
+            fromSub,
             'included_pending_finality',
             nonce,
             txHash
@@ -938,14 +940,15 @@ export class MonadPaymentExecutor implements PaymentExecutor {
           `Transaction hash not found on chain after ${notFoundWindowMs}ms search window; held for operator review`
         );
       } else {
-        proposalsRepo.updateExecutionSubstate(proposalId, 'broadcasted_unknown');
+        const targetSubstate = currentSubstate === 'broadcasted_unknown' ? 'broadcasted_unknown' : 'broadcast_accepted';
+        proposalsRepo.updateExecutionSubstate(proposalId, targetSubstate);
         this.auditSubstateChange(
           proposalId,
           currentSubstate,
-          'broadcasted_unknown',
+          targetSubstate,
           nonce,
           txHash,
-          `Receipt not observed within ${timeoutMs}ms finality timeout; remains in broadcasted_unknown pending reconcile`
+          `Receipt not observed within ${timeoutMs}ms finality timeout; remains in ${targetSubstate} pending reconcile`
         );
       }
 

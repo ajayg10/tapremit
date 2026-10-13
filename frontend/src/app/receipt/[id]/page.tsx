@@ -42,6 +42,21 @@ export default function ReceiptTimelinePage() {
     }
   }, [proposalId, router]);
 
+  // Poll every 2.5 seconds until proposal reaches terminal state
+  useEffect(() => {
+    if (!proposal || proposal.status !== 'submitted') return;
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.getTimeline(proposal.id);
+        setProposal(data.proposal);
+        setTimeline(data.timeline);
+      } catch {
+        // Retry next tick
+      }
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [proposal?.id, proposal?.status]);
+
   const loadReceiptAndTimeline = async (id: string) => {
     setLoading(true);
     setError(null);
@@ -121,15 +136,39 @@ export default function ReceiptTimelinePage() {
               </div>
             </div>
 
-            {/* SIMULATED label requirement */}
+            {/* Execution status badges mapped from status + execution_substate */}
             {isSimulated ? (
               <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-950 text-amber-300 border border-amber-700 flex items-center gap-1.5 shadow-sm shadow-amber-950">
                 <Cpu className="w-3.5 h-3.5 text-amber-400" />
                 SIMULATED EXECUTION
               </span>
+            ) : proposal.status === 'confirmed' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-emerald-950 text-emerald-300 border border-emerald-700 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                MONAD FINALIZED
+              </span>
+            ) : proposal.status === 'failed' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-rose-950 text-rose-300 border border-rose-700">
+                FAILED ON-CHAIN
+              </span>
+            ) : proposal.execution_substate === 'included_pending_finality' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-purple-950 text-purple-300 border border-purple-700 flex items-center gap-1.5 animate-pulse">
+                <Clock className="w-3.5 h-3.5 text-purple-400" />
+                INCLUDED (AWAITING FINALITY)
+              </span>
+            ) : proposal.execution_substate === 'broadcasted_unknown' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-amber-950 text-amber-300 border border-amber-700 flex items-center gap-1.5 animate-pulse">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                OUTCOME UNKNOWN, CHECKING
+              </span>
+            ) : proposal.execution_substate === 'not_found_needs_review' ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-rose-950 text-rose-300 border border-rose-700">
+                NOT FOUND, NEEDS REVIEW
+              </span>
             ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-emerald-950 text-emerald-300 border border-emerald-700">
-                ON-CHAIN CONFIRMED
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-blue-950 text-blue-300 border border-blue-700 flex items-center gap-1.5 animate-pulse">
+                <Clock className="w-3.5 h-3.5 text-blue-400" />
+                SUBMITTED (BROADCAST ACCEPTED)
               </span>
             )}
           </div>
@@ -170,13 +209,26 @@ export default function ReceiptTimelinePage() {
             </div>
           </div>
 
-          {/* Tx Reference */}
+          {/* Tx Reference & Explorer Link */}
           {proposal.execution_tx_hash && (
-            <div className="p-3 rounded-xl bg-gray-950 border border-gray-800 text-xs flex flex-wrap items-center justify-between gap-2">
-              <span className="text-gray-400 font-medium">Execution Reference / Tx:</span>
-              <span className="font-mono text-gray-300 text-[11px]">
-                {proposal.execution_tx_hash}
-              </span>
+            <div className="p-3.5 rounded-xl bg-gray-950 border border-gray-800 text-xs flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-gray-400 font-medium block">Transaction Hash:</span>
+                <span className="font-mono text-gray-200 text-xs select-all">
+                  {proposal.execution_tx_hash}
+                </span>
+              </div>
+              {!isSimulated && (
+                <a
+                  href={`https://testnet.monadscan.com/tx/${proposal.execution_tx_hash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800 text-indigo-300 hover:text-white font-medium text-xs transition"
+                >
+                  <span>View on Explorer</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
             </div>
           )}
         </div>

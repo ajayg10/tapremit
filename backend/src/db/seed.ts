@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { db } from './db';
 import { runMigrations } from './migrate';
 import { usersRepo } from './users.repository';
 import { proposalsRepo } from './proposals.repository';
@@ -34,6 +35,10 @@ export function seedDemoData() {
       wallet_address: aliceWallet,
     });
     console.log('  Created user: @alice_agent (Primary Demo Sender)');
+  } else if (!alice.wallet_address) {
+    db.prepare('UPDATE users SET wallet_address = ? WHERE id = ?').run(aliceWallet, alice.id);
+    alice = usersRepo.getById(alice.id)!;
+    console.log('  Assigned wallet to @alice_agent:', aliceWallet);
   }
 
   // 2. Riya (Known Contact — has prior settled transaction)
@@ -46,6 +51,10 @@ export function seedDemoData() {
       wallet_address: riyaWallet,
     });
     console.log('  Created user: @riya (Known Contact)');
+  } else if (!riya.wallet_address) {
+    db.prepare('UPDATE users SET wallet_address = ? WHERE id = ?').run(riyaWallet, riya.id);
+    riya = usersRepo.getById(riya.id)!;
+    console.log('  Assigned wallet to @riya:', riyaWallet);
   }
 
   // 3. Bob (First-Time Recipient — no prior transactions)
@@ -58,6 +67,10 @@ export function seedDemoData() {
       wallet_address: bobWallet,
     });
     console.log('  Created user: @bob_builder (First-Time Recipient)');
+  } else if (!bob.wallet_address) {
+    db.prepare('UPDATE users SET wallet_address = ? WHERE id = ?').run(bobWallet, bob.id);
+    bob = usersRepo.getById(bob.id)!;
+    console.log('  Assigned wallet to @bob_builder:', bobWallet);
   }
 
   // 4. Charlie (Additional Contact)
@@ -70,6 +83,10 @@ export function seedDemoData() {
       wallet_address: charlieWallet,
     });
     console.log('  Created user: @charlie (Additional Contact)');
+  } else if (!charlie.wallet_address) {
+    db.prepare('UPDATE users SET wallet_address = ? WHERE id = ?').run(charlieWallet, charlie.id);
+    charlie = usersRepo.getById(charlie.id)!;
+    console.log('  Assigned wallet to @charlie:', charlieWallet);
   }
 
   // 5. Check if historical transaction exists between Alice and Riya

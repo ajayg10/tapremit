@@ -2202,4 +2202,194 @@ describe('MonadPaymentExecutor & Testnet Robustness', () => {
       (env as any).OPERATOR_OVERRIDE_ALLOW_SENDS = origOverride;
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // 34. Distinct 'broadcast_accepted' Substate Does Not Block Consecutive Sends
+  // ---------------------------------------------------------------------------
+  it('should allow two back-to-back approvals with consecutive nonces without broadcast_accepted triggering stuck lock', async () => {
+    const p1 = proposalsRepo.create({
+      id: uuidv4(),
+      user_id: senderUser.id,
+      origin: 'user',
+      recipient_handle: recipientUser.handle,
+      recipient_id: recipientUser.id,
+      recipient_wallet: recipientUser.wallet_address,
+      amount: '10000000000000000', // 0.01 MON
+      display_amount: '0.01',
+      asset: 'MON',
+      network: 'Monad Testnet',
+      proposal_hash: 'h_back_to_back_1',
+      status: 'approved',
+      policy_decision: 'ALLOW',
+      policy_reasons: '[]',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      execution_mode: 'testnet',
+    });
+
+    const p2 = proposalsRepo.create({
+      id: uuidv4(),
+      user_id: senderUser.id,
+      origin: 'user',
+      recipient_handle: recipientUser.handle,
+      recipient_id: recipientUser.id,
+      recipient_wallet: recipientUser.wallet_address,
+      amount: '10000000000000000', // 0.01 MON
+      display_amount: '0.01',
+      asset: 'MON',
+      network: 'Monad Testnet',
+      proposal_hash: 'h_back_to_back_2',
+      status: 'approved',
+      policy_decision: 'ALLOW',
+      policy_reasons: '[]',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      execution_mode: 'testnet',
+    });
+
+    const mockReadClient: any = {
+      getChainId: vi.fn().mockResolvedValue(10143),
+      getTransactionCount: vi.fn().mockResolvedValue(10n),
+      getBytecode: vi.fn().mockResolvedValue('0x'),
+      getBalance: vi.fn().mockResolvedValue(10000000000000000000n),
+      getGasPrice: vi.fn().mockResolvedValue(1000000000n),
+    };
+
+    const mockSendClient: any = {
+      sendRawTransaction: vi.fn().mockResolvedValue('0xtxhash_ok'),
+    };
+
+    const executor = new MonadPaymentExecutor(mockReadClient, mockSendClient, testAccount);
+
+    // First send executes and transitions to 'broadcast_accepted'
+    const r1 = await executor.executePayment(p1);
+    expect(r1.status).toBe('submitted');
+
+    const updatedP1 = proposalsRepo.getById(p1.id);
+    expect(updatedP1?.execution_substate).toBe('broadcast_accepted');
+    expect(updatedP1?.execution_nonce).toBe(10);
+
+    // Second send executes immediately while p1 is in 'broadcast_accepted' (NOT blocked as stuck!)
+    const r2 = await executor.executePayment(p2);
+    expect(r2.status).toBe('submitted');
+
+    const updatedP2 = proposalsRepo.getById(p2.id);
+    expect(updatedP2?.execution_substate).toBe('broadcast_accepted');
+    expect(updatedP2?.execution_nonce).toBe(11); // Consecutive nonce!
+  });
+
+  // ---------------------------------------------------------------------------
+  // 35. Ambiguous Broadcast ('broadcasted_unknown') Still Locks Subsequent Sends
+  // ---------------------------------------------------------------------------
+  it('should ensure ambiguous broadcast in broadcasted_unknown still locks subsequent sends', async () => {
+    const p1 = proposalsRepo.create({
+      id: uuidv4(),
+      user_id: senderUser.id,
+      origin: 'user',
+      recipient_handle: recipientUser.handle,
+      recipient_id: recipientUser.id,
+      recipient_wallet: recipientUser.wallet_address,
+      amount: '10000000000000000',
+      display_amount: '0.01',
+      asset: 'MON',
+      network: 'Monad Testnet',
+      proposal_hash: 'h_ambig_locks_1',
+      status: 'approved',
+      policy_decision: 'ALLOW',
+      policy_reasons: '[]',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      execution_mode: 'testnet',
+    });
+
+    const p2 = proposalsRepo.create({
+      id: uuidv4(),
+      user_id: senderUser.id,
+      origin: 'user',
+      recipient_handle: recipientUser.handle,
+      recipient_id: recipientUser.id,
+      recipient_wallet: recipientUser.wallet_address,
+      amount: '10000000000000000',
+      display_amount: '0.01',
+      asset: 'MON',
+      network: 'Monad Testnet',
+      proposal_hash: 'h_ambig_locks_2',
+      status: 'approved',
+      policy_decision: 'ALLOW',
+      policy_reasons: '[]',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      execution_mode: 'testnet',
+    });
+
+    const mockReadClient: any = {
+      getChainId: vi.fn().mockResolvedValue(10143),
+      getTransactionCount: vi.fn().mockResolvedValue(10n),
+      getBytecode: vi.fn().mockResolvedValue('0x'),
+      getBalance: vi.fn().mockResolvedValue(10000000000000000000n),
+      getGasPrice: vi.fn().mockResolvedValue(1000000000n),
+    };
+
+    // p1 experiences ambiguous network failure
+    const mockSendClient: any = {
+      sendRawTransaction: vi.fn().mockRejectedValue(new Error('ETIMEDOUT: Connection dropped by peer')),
+    };
+
+    const executor = new MonadPaymentExecutor(mockReadClient, mockSendClient, testAccount);
+
+    await executor.executePayment(p1);
+
+    const updatedP1 = proposalsRepo.getById(p1.id);
+    expect(updatedP1?.execution_substate).toBe('broadcasted_unknown');
+
+    // p2 MUST be blocked because p1 is in 'broadcasted_unknown' (stuck proposals lock)!
+    await expect(executor.executePayment(p2)).rejects.toMatchObject({
+      code: 'STUCK_TRANSACTIONS_BLOCK',
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 36. Normal Accepted Broadcast Sets broadcast_accepted and Never Shows 'unknown'
+  // ---------------------------------------------------------------------------
+  it('should ensure normal accepted broadcast sets substate broadcast_accepted and never shows unknown in API', async () => {
+    const proposalData: any = {
+      id: uuidv4(),
+      user_id: senderUser.id,
+      origin: 'user',
+      recipient_handle: recipientUser.handle,
+      recipient_id: recipientUser.id,
+      recipient_wallet: recipientUser.wallet_address,
+      amount: '10000000000000000',
+      display_amount: '0.01',
+      asset: 'MON',
+      network: 'Monad Testnet',
+      status: 'awaiting_approval',
+      policy_decision: 'ALLOW',
+      policy_reasons: '[]',
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      execution_mode: 'testnet',
+      created_at: new Date().toISOString(),
+    };
+    proposalData.proposal_hash = computeCanonicalProposalHash(proposalData);
+    const proposal = proposalsRepo.create(proposalData);
+
+    const mockReadClient: any = {
+      getChainId: vi.fn().mockResolvedValue(10143),
+      getTransactionCount: vi.fn().mockResolvedValue(10n),
+      getBytecode: vi.fn().mockResolvedValue('0x'),
+      getBalance: vi.fn().mockResolvedValue(10000000000000000000n),
+      getGasPrice: vi.fn().mockResolvedValue(1000000000n),
+    };
+
+    const mockSendClient: any = {
+      sendRawTransaction: vi.fn().mockResolvedValue('0xtxhash_accepted'),
+    };
+
+    const customExecutor = new MonadPaymentExecutor(mockReadClient, mockSendClient, testAccount);
+    const service = new ProposalService(customExecutor);
+
+    const res = await service.approveProposal(proposal.id, senderUser.id, undefined, { confirm_new_recipient: true });
+
+    // Status is 'submitted' and substate is 'broadcast_accepted' (NEVER 'unknown'!)
+    expect(res.proposal.status).toBe('submitted');
+    expect(res.proposal.execution_substate).toBe('broadcast_accepted');
+    expect(res.receipt.details).not.toContain('unknown');
+    expect(res.receipt.details).toContain('broadcast accepted by node');
+  });
 });

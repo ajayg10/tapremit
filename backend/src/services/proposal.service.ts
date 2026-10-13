@@ -5,6 +5,7 @@ import { auditRepo } from '../db/audit.repository';
 import { policyService } from './policy.service';
 import { PaymentExecutor } from '../adapters/payment/PaymentExecutor';
 import { MockPaymentExecutor } from '../adapters/payment/MockPaymentExecutor';
+import { MonadPaymentExecutor } from '../adapters/payment/MonadPaymentExecutor';
 import { env } from '../config/env';
 
 // ---------------------------------------------------------------------------
@@ -48,7 +49,13 @@ export class ProposalService {
   private paymentExecutor: PaymentExecutor;
 
   constructor(executor?: PaymentExecutor) {
-    this.paymentExecutor = executor || new MockPaymentExecutor();
+    if (executor) {
+      this.paymentExecutor = executor;
+    } else {
+      this.paymentExecutor = env.MOCK_PAYMENT_EXECUTOR
+        ? new MockPaymentExecutor()
+        : new MonadPaymentExecutor();
+    }
   }
 
   setPaymentExecutor(executor: PaymentExecutor) {

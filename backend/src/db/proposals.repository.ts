@@ -15,6 +15,7 @@ export type ProposalStatus =
 
 export type ProposalExecutionSubstate =
   | 'awaiting_broadcast'
+  | 'broadcast_accepted'
   | 'broadcasted_unknown'
   | 'included_pending_finality'
   | 'not_found_needs_review';
@@ -124,8 +125,8 @@ export const proposalsRepo = {
 
   listByUserId: (userId: string, limit: number = 20): Proposal[] => {
     return db
-      .prepare('SELECT * FROM proposals WHERE user_id = ? ORDER BY rowid DESC LIMIT ?')
-      .all(userId, limit) as Proposal[];
+      .prepare('SELECT * FROM proposals WHERE user_id = ? OR recipient_id = ? ORDER BY rowid DESC LIMIT ?')
+      .all(userId, userId, limit) as Proposal[];
   },
 
   getByIdempotencyKey: (key: string): Proposal | undefined => {
@@ -267,7 +268,7 @@ export const proposalsRepo = {
       .prepare(`
         SELECT * FROM proposals
         WHERE execution_mode = 'testnet'
-          AND (status = 'submitted' OR execution_substate IN ('awaiting_broadcast', 'broadcasted_unknown', 'included_pending_finality', 'not_found_needs_review'))
+          AND (status = 'submitted' OR execution_substate IN ('awaiting_broadcast', 'broadcast_accepted', 'broadcasted_unknown', 'included_pending_finality', 'not_found_needs_review'))
       `)
       .all() as Proposal[];
   },

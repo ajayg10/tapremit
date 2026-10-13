@@ -52,7 +52,8 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 - Canonical proposal hash includes `recipient_wallet` in addition to handle/amount/network.
 - Immutability of `users.wallet_address` is strictly enforced by SQLite trigger `users_wallet_address_immutable` (BEFORE UPDATE OF wallet_address).
 - `GLOBAL_DAILY_LIMIT_MON` (default 2.0 MON) is enforced both in the policy engine and inside the executor.
-- Fail closed on stuck transactions: Real sends refuse execution if any proposal is in `broadcasted_unknown` or `not_found_needs_review`, unless `OPERATOR_OVERRIDE_ALLOW_SENDS=true`.
+- Fail closed on stuck transactions: Real sends refuse execution if any proposal is in `broadcasted_unknown` or `not_found_needs_review`, unless `OPERATOR_OVERRIDE_ALLOW_SENDS=true`. Normal mempool acceptance uses `broadcast_accepted` and does not lock subsequent sends.
+- Substate distinction: `broadcast_accepted` (node returned tx hash, awaiting inclusion) vs `broadcasted_unknown` (ambiguous transport drop/timeout). Only true ambiguity and `not_found_needs_review` trigger the stuck-proposal lock and nonce ambiguity flag. Normal sends never show "unknown" in the API.
 - Finality verification: Re-queries receipt on every poll; resets substate to `broadcasted_unknown` if receipt disappears; only marks `confirmed` when `receipt.blockNumber <= finalizedBlockNumber` AND `receipt.blockHash === finalizedBlock.hash`.
 
 ## 6. Known issues / lessons
