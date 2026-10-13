@@ -27,18 +27,27 @@ export class PolicyService {
   evaluate(context: PolicyEvaluationContext): PolicyEvaluationResult {
     const outcomes: RuleOutcome[] = [];
 
+    const isRealExecutor = !env.MOCK_PAYMENT_EXECUTOR;
+    const allowedAsset = isRealExecutor ? 'MON' : 'AUSD';
+
     // 1. Asset verification
-    if (context.asset !== 'AUSD') {
+    if (isRealExecutor && context.asset !== 'MON') {
       outcomes.push({
         rule: 'ASSET_WHITELIST',
         decision: 'DENY',
-        reason: `Asset '${context.asset}' is not supported. Only AUSD is permitted.`,
+        reason: `Asset '${context.asset}' is not permitted in real testnet mode. Only native 'MON' is supported.`,
+      });
+    } else if (!isRealExecutor && context.asset !== 'AUSD' && context.asset !== 'MON') {
+      outcomes.push({
+        rule: 'ASSET_WHITELIST',
+        decision: 'DENY',
+        reason: `Asset '${context.asset}' is not supported. Permitted assets: AUSD, MON.`,
       });
     } else {
       outcomes.push({
         rule: 'ASSET_WHITELIST',
         decision: 'ALLOW',
-        reason: 'Asset is supported (AUSD).',
+        reason: `Asset '${context.asset}' is supported on active network.`,
       });
     }
 
@@ -57,46 +66,77 @@ export class PolicyService {
       });
     }
 
+    // Determine limits and scaling based on asset
+    const isMon = context.asset === 'MON';
+    const decimals = isMon ? 18 : 6;
+    const perTxLimitVal = isMon ? env.PER_TX_LIMIT_MON : env.PER_TX_LIMIT_AUSD;
+    const dailyLimitVal = isMon ? env.DAILY_LIMIT_MON : env.DAILY_LIMIT_AUSD;
+    const multiplier = 10n ** BigInt(decimals);
+
+    // Compute base units limit without float precision loss
+    const perTxLimitBaseUnits = BigInt(Math.round(perTxLimitVal * 1_000_000)) * (10n ** BigInt(decimals - 6));
+
     // 3. Per-transaction limit
-    const perTxLimitBaseUnits = BigInt(Math.round(env.PER_TX_LIMIT_AUSD * 1_000_000));
     if (context.amountBaseUnits > perTxLimitBaseUnits) {
       outcomes.push({
         rule: 'PER_TX_LIMIT',
         decision: 'DENY',
-        reason: `Amount (${context.displayAmount} AUSD) exceeds per-transaction limit of ${env.PER_TX_LIMIT_AUSD} AUSD.`,
-        metadata: { limit: env.PER_TX_LIMIT_AUSD, requested: context.displayAmount },
+        reason: `Amount (${context.displayAmount} ${context.asset}) exceeds per-transaction limit of ${perTxLimitVal} ${context.asset}.`,
+        metadata: { limit: perTxLimitVal, requested: context.displayAmount },
       });
     } else {
       outcomes.push({
         rule: 'PER_TX_LIMIT',
         decision: 'ALLOW',
-        reason: `Within per-transaction limit of ${env.PER_TX_LIMIT_AUSD} AUSD.`,
+        reason: `Within per-transaction limit of ${perTxLimitVal} ${context.asset}.`,
       });
     }
 
     // 4. Rolling 24-hour spending limit
-    const rolling24hTotal = proposalsRepo.getRolling24hTotalAmount(context.userId);
-    const dailyLimitBaseUnits = BigInt(Math.round(env.DAILY_LIMIT_AUSD * 1_000_000));
+    const rolling24hTotal = proposalsRepo.getRolling24hTotalAmount(context.userId, context.asset);
+    const dailyLimitBaseUnits = BigInt(Math.round(dailyLimitVal * 1_000_000)) * (10n ** BigInt(decimals - 6));
     const projectedTotal = rolling24hTotal + context.amountBaseUnits;
 
     if (projectedTotal > dailyLimitBaseUnits) {
-      const rollingTotalDisplay = Number(rolling24hTotal) / 1_000_000;
+      const rollingTotalDisplay = Number(rolling24hTotal / (10n ** BigInt(decimals - 6))) / 1_000_000;
       outcomes.push({
         rule: 'DAILY_ROLLING_LIMIT',
         decision: 'DENY',
-        reason: `Transaction would exceed rolling 24-hour limit of ${env.DAILY_LIMIT_AUSD} AUSD (Current 24h total: ${rollingTotalDisplay} AUSD).`,
+        reason: `Transaction would exceed rolling 24-hour limit of ${dailyLimitVal} ${context.asset} (Current 24h total: ${rollingTotalDisplay} ${context.asset}).`,
         metadata: {
-          limit: env.DAILY_LIMIT_AUSD,
+          limit: dailyLimitVal,
           currentTotal: rollingTotalDisplay,
           requested: context.displayAmount,
         },
       });
     } else {
+      const currentSpentDisplay = Number(rolling24hTotal / (10n ** BigInt(decimals - 6))) / 1_000_000;
       outcomes.push({
         rule: 'DAILY_ROLLING_LIMIT',
         decision: 'ALLOW',
-        reason: `Within rolling 24-hour limit (${Number(rolling24hTotal) / 1_000_000} / ${env.DAILY_LIMIT_AUSD} AUSD spent).`,
+        reason: `Within rolling 24-hour limit (${currentSpentDisplay} / ${dailyLimitVal} ${context.asset} spent).`,
       });
+    }
+
+    // 4b. Global Daily Limit (for MON)
+    if (isMon) {
+      const global24hTotal = proposalsRepo.getRolling24hGlobalTotalAmount('MON');
+      const globalLimitBaseUnits = BigInt(Math.round(env.GLOBAL_DAILY_LIMIT_MON * 1_000_000)) * (10n ** 12n);
+      if (global24hTotal + context.amountBaseUnits > globalLimitBaseUnits) {
+        const globalSpentDisplay = Number(global24hTotal / (10n ** 12n)) / 1_000_000;
+        outcomes.push({
+          rule: 'GLOBAL_DAILY_LIMIT',
+          decision: 'DENY',
+          reason: `Transaction would exceed global daily limit of ${env.GLOBAL_DAILY_LIMIT_MON} MON across all relayer sends (Current: ${globalSpentDisplay} MON).`,
+          metadata: { limit: env.GLOBAL_DAILY_LIMIT_MON, current: globalSpentDisplay },
+        });
+      } else {
+        outcomes.push({
+          rule: 'GLOBAL_DAILY_LIMIT',
+          decision: 'ALLOW',
+          reason: `Within global daily relayer limit of ${env.GLOBAL_DAILY_LIMIT_MON} MON.`,
+        });
+      }
     }
 
     // 5. Known contacts / First-time recipient check

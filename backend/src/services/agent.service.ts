@@ -92,7 +92,10 @@ export class AgentService {
     // 4. Construct Proposal Structure
     const proposalId = uuidv4();
     const amountBaseUnits = BigInt(parseResult.amount);
-    const displayAmountNum = Number(amountBaseUnits) / 1_000_000;
+    const isMon = parseResult.asset === 'MON';
+    const displayAmountNum = isMon
+      ? Number(amountBaseUnits / (10n ** 12n)) / 1_000_000
+      : Number(amountBaseUnits) / 1_000_000;
     const displayAmount = displayAmountNum.toString();
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + env.PROPOSAL_TTL_SECONDS * 1000).toISOString();
@@ -102,6 +105,7 @@ export class AgentService {
       user_id:          userId,
       recipient_id:     recipient.id,
       recipient_handle: recipient.handle,
+      recipient_wallet: recipient.wallet_address,
       amount:           parseResult.amount,
       asset:            parseResult.asset,
       network:          'Monad Testnet',
@@ -125,6 +129,7 @@ export class AgentService {
     // denied  = policy engine blocked it (this is its terminal state)
     // awaiting_approval = needs human authorization
     const status = policyResult.decision === 'DENY' ? 'denied' : 'awaiting_approval';
+    const executionMode = env.MOCK_PAYMENT_EXECUTOR ? 'mock' : 'testnet';
 
     // 6. Save Proposal
     const proposal = proposalsRepo.create({
@@ -145,6 +150,7 @@ export class AgentService {
       policy_reasons: JSON.stringify(policyResult.reasons),
       idempotency_key: idempotencyKey || null,
       expires_at: expiresAt,
+      execution_mode: executionMode,
       created_at: createdAt,
     });
 

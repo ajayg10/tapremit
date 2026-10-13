@@ -31,10 +31,14 @@ const DETAILS_ALLOWLIST: Record<string, readonly string[]> = {
   denied:                        ['reason'],
   expired:                       ['reason'],
   execution_submitted:           ['executor'],
+  execution_substate_changed:    ['from_substate', 'to_substate', 'nonce', 'tx_hash', 'details'],
   execution_simulated_confirmed: ['tx_hash', 'network', 'is_simulated'],
-  execution_confirmed:           ['tx_hash', 'network', 'is_simulated'],
-  execution_failed:              ['error'],
+  execution_confirmed:           ['tx_hash', 'network', 'is_simulated', 'finalized_block_number', 'finalized_block_hash', 'explorer_link'],
+  execution_failed:              ['error', 'code', 'tx_hash', 'finalized_block_number', 'finalized_block_hash'],
+  execution_paused:              ['error', 'code'],
   policy_recheck_denied:         ['decision', 'rule', 'reason'],
+  reconcile_sweep:               ['substate', 'details', 'tx_hash', 'reason'],
+  reconcile_sweep_paused:        ['reason'],
 } as const;
 
 function filterDetails(action: string, details?: Record<string, any>): string | null {

@@ -1,14 +1,28 @@
 import { v4 as uuidv4 } from 'uuid';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { runMigrations } from './migrate';
 import { usersRepo } from './users.repository';
 import { proposalsRepo } from './proposals.repository';
 import { auditRepo } from './audit.repository';
 import { computeCanonicalProposalHash } from '../services/proposal.service';
+import { env } from '../config/env';
+
+function getOrGenerateAddress(envAddress?: string): string {
+  if (envAddress && envAddress.startsWith('0x') && envAddress.length === 42) {
+    return envAddress;
+  }
+  return privateKeyToAccount(generatePrivateKey()).address;
+}
 
 export function seedDemoData() {
   runMigrations();
 
   console.log('🌱 Seeding demo accounts and contacts...');
+
+  const aliceWallet = getOrGenerateAddress(env.SEED_ALICE_WALLET);
+  const riyaWallet = getOrGenerateAddress(env.SEED_RIYA_WALLET);
+  const bobWallet = getOrGenerateAddress(env.SEED_BOB_WALLET);
+  const charlieWallet = getOrGenerateAddress(env.SEED_CHARLIE_WALLET);
 
   // 1. Alice (Primary demo user / sender)
   let alice = usersRepo.getByHandle('alice_agent');
@@ -17,6 +31,7 @@ export function seedDemoData() {
       handle: 'alice_agent',
       display_name: 'Alice',
       phone: '+14155552671',
+      wallet_address: aliceWallet,
     });
     console.log('  Created user: @alice_agent (Primary Demo Sender)');
   }
@@ -28,6 +43,7 @@ export function seedDemoData() {
       handle: 'riya',
       display_name: 'Riya Patel',
       phone: '+14155552672',
+      wallet_address: riyaWallet,
     });
     console.log('  Created user: @riya (Known Contact)');
   }
@@ -39,6 +55,7 @@ export function seedDemoData() {
       handle: 'bob_builder',
       display_name: 'Bob Miller',
       phone: '+14155552673',
+      wallet_address: bobWallet,
     });
     console.log('  Created user: @bob_builder (First-Time Recipient)');
   }
@@ -50,6 +67,7 @@ export function seedDemoData() {
       handle: 'charlie',
       display_name: 'Charlie Zhang',
       phone: '+14155552674',
+      wallet_address: charlieWallet,
     });
     console.log('  Created user: @charlie (Additional Contact)');
   }
@@ -68,6 +86,7 @@ export function seedDemoData() {
       user_id: alice.id,
       recipient_id: riya.id,
       recipient_handle: riya.handle,
+      recipient_wallet: riya.wallet_address,
       amount,
       asset: 'AUSD',
       network: 'Monad Testnet',
@@ -83,6 +102,7 @@ export function seedDemoData() {
       origin: 'agent',
       recipient_handle: riya.handle,
       recipient_id: riya.id,
+      recipient_wallet: riya.wallet_address,
       amount,
       display_amount: displayAmount,
       asset: 'AUSD',
@@ -98,6 +118,7 @@ export function seedDemoData() {
         { rule: 'DAILY_ROLLING_LIMIT', decision: 'ALLOW', reason: 'Within rolling 24-hour limit.' },
       ]),
       expires_at: expiresAt,
+      execution_mode: 'mock',
       created_at: createdAt,
     });
 

@@ -17,6 +17,7 @@ export function computeCanonicalProposalHash(data: {
   user_id: string;
   recipient_id: string;
   recipient_handle: string;
+  recipient_wallet?: string | null;
   amount: string;       // base-unit integer string
   asset: string;
   network: string;
@@ -30,6 +31,7 @@ export function computeCanonicalProposalHash(data: {
     user_id:          data.user_id,
     recipient_id:     data.recipient_id,
     recipient_handle: data.recipient_handle.toLowerCase(),
+    recipient_wallet: data.recipient_wallet ? data.recipient_wallet.toLowerCase() : null,
     amount:           data.amount,
     asset:            data.asset,
     network:          data.network,
@@ -81,18 +83,33 @@ export class ProposalService {
       return proposalsRepo.getById(id)!;
     }
 
+    // Lazy background reconcile: if proposal is submitted, check on-chain status
+    if (proposal.status === 'submitted' && this.paymentExecutor.reconcilePayment) {
+      this.paymentExecutor.reconcilePayment(proposal).catch(() => {});
+    }
+
     return proposal;
   }
 
   async approveProposal(
     id: string,
     requestingUserId: string,
-    clientProvidedHash?: string
+    clientProvidedHash?: string,
+    confirmNewRecipient?: boolean
   ): Promise<{ proposal: Proposal; receipt: any }> {
     // -----------------------------------------------------------------------
     // Pre-flight checks (outside the transaction — stateless verifications)
     // -----------------------------------------------------------------------
     const proposal = this.getProposal(id, requestingUserId);
+
+    // Confirm new recipient server-side check
+    const isKnownRecipient = proposalsRepo.hasTransactedWith(proposal.user_id, proposal.recipient_id);
+    if (!isKnownRecipient && !confirmNewRecipient) {
+      throw {
+        status: 400,
+        message: 'First-time recipient transfer requires explicit confirmation (confirm_new_recipient: true)',
+      };
+    }
 
     if (proposal.status === 'denied') {
       throw { status: 400, message: 'Cannot approve denied proposal' };
@@ -104,8 +121,33 @@ export class ProposalService {
       throw { status: 400, message: `Invalid state transition: Cannot approve proposal in '${proposal.status}' status` };
     }
 
-    // Expiry re-check (redundant with getProposal, but also guards against the
-    // small window between getProposal and the DB transaction below)
+    // Execution mode and asset match verification
+    const activeMode = this.paymentExecutor.isMock ? 'mock' : 'testnet';
+    if (proposal.execution_mode !== activeMode) {
+      throw {
+        status: 400,
+        message: `Proposal execution mode mismatch: proposal mode '${proposal.execution_mode}' does not match active executor mode '${activeMode}'`,
+      };
+    }
+    if (proposal.asset !== this.paymentExecutor.supportedAsset) {
+      throw {
+        status: 400,
+        message: `Proposal asset mismatch: proposal asset '${proposal.asset}' cannot be executed by '${this.paymentExecutor.name}' (supported: '${this.paymentExecutor.supportedAsset}')`,
+      };
+    }
+
+    // Fail closed: Check stuck transactions if in real testnet mode
+    if (activeMode === 'testnet') {
+      const stuck = proposalsRepo.getStuckProposals();
+      if (stuck.length > 0 && !env.OPERATOR_OVERRIDE_ALLOW_SENDS) {
+        throw {
+          status: 503,
+          message: `Real transfers are blocked: Proposal ${stuck[0].id} is in stuck state '${stuck[0].execution_substate}'. Resolve stuck transactions or set OPERATOR_OVERRIDE_ALLOW_SENDS=true to proceed.`,
+        };
+      }
+    }
+
+    // Expiry re-check
     if (new Date(proposal.expires_at) <= new Date()) {
       proposalsRepo.updateStatus(proposal.id, ['awaiting_approval'], 'expired');
       auditRepo.log({
@@ -118,12 +160,13 @@ export class ProposalService {
       throw { status: 400, message: 'Cannot approve expired proposal' };
     }
 
-    // Integrity check: recompute the canonical hash from stored fields
+    // Integrity check: recompute canonical hash including recipient_wallet
     const expectedHash = computeCanonicalProposalHash({
       id:               proposal.id,
       user_id:          proposal.user_id,
       recipient_id:     proposal.recipient_id,
       recipient_handle: proposal.recipient_handle,
+      recipient_wallet: proposal.recipient_wallet,
       amount:           proposal.amount,
       asset:            proposal.asset,
       network:          proposal.network,
@@ -142,16 +185,10 @@ export class ProposalService {
 
     // -----------------------------------------------------------------------
     // Atomic DB transaction: policy re-run + compare-and-swap state flip
-    //
-    // All calls here are synchronous (better-sqlite3 + sync policy engine).
-    // The payment executor runs AFTER the transaction commits.
     // -----------------------------------------------------------------------
     type TxOutcome = { kind: 'approved' } | { kind: 'conflict' } | { kind: 'denied'; denyReason: string };
 
     const txOutcome = db.transaction((): TxOutcome => {
-      // Re-run the full policy engine against current DB state. This catches
-      // the case where several pending proposals were created simultaneously
-      // and approving them one by one would cumulatively exceed the daily limit.
       const recheck = policyService.evaluate({
         userId:           proposal.user_id,
         recipientId:      proposal.recipient_id,
@@ -164,7 +201,6 @@ export class ProposalService {
 
       if (recheck.decision === 'DENY') {
         const denyRule = recheck.reasons.find(r => r.decision === 'DENY');
-        // CAS: transition to denied so it can never be retried
         proposalsRepo.updateStatus(proposal.id, ['awaiting_approval'], 'denied');
         auditRepo.log({
           proposal_id:    proposal.id,
@@ -180,7 +216,7 @@ export class ProposalService {
         return { kind: 'denied', denyReason: denyRule?.reason ?? 'Policy re-check denied the proposal' };
       }
 
-      // CAS: awaiting_approval → approved (exactly one row must change)
+      // CAS: awaiting_approval → approved
       const flipped = proposalsRepo.updateStatus(proposal.id, ['awaiting_approval'], 'approved');
       if (!flipped) {
         return { kind: 'conflict' };
@@ -200,15 +236,17 @@ export class ProposalService {
         },
       });
 
-      // approved → submitted
-      proposalsRepo.updateStatus(proposal.id, ['approved'], 'submitted');
-      auditRepo.log({
-        proposal_id:    proposal.id,
-        actor_type:     'system',
-        action:         'execution_submitted',
-        proposal_hash:  proposal.proposal_hash,
-        details: { executor: this.paymentExecutor.name },
-      });
+      if (this.paymentExecutor.isMock) {
+        // In mock mode, transition approved -> submitted before simulation
+        proposalsRepo.updateStatus(proposal.id, ['approved'], 'submitted');
+        auditRepo.log({
+          proposal_id:    proposal.id,
+          actor_type:     'system',
+          action:         'execution_submitted',
+          proposal_hash:  proposal.proposal_hash,
+          details: { executor: this.paymentExecutor.name },
+        });
+      }
 
       return { kind: 'approved' };
     })();
@@ -221,46 +259,120 @@ export class ProposalService {
     }
 
     // -----------------------------------------------------------------------
-    // Payment execution (async, outside the DB transaction)
+    // Payment execution (async, outside DB transaction)
     // -----------------------------------------------------------------------
+    const approvedProposal = proposalsRepo.getById(proposal.id)!;
     try {
-      const receipt = await this.paymentExecutor.executePayment(proposal);
-      const finalStatus: ProposalStatus =
-        receipt.status === 'simulated_confirmed' ? 'simulated_confirmed' : 'confirmed';
+      const receipt = await this.paymentExecutor.executePayment(approvedProposal);
 
-      proposalsRepo.updateStatus(proposal.id, ['submitted'], finalStatus, {
-        execution_tx_hash: receipt.txHash,
-      });
+      if (receipt.status === 'confirmed' || receipt.status === 'simulated_confirmed') {
+        const finalStatus: ProposalStatus = receipt.isSimulated ? 'simulated_confirmed' : 'confirmed';
+        proposalsRepo.updateStatus(proposal.id, ['submitted'], finalStatus, {
+          execution_tx_hash: receipt.txHash,
+          execution_substate: null,
+        });
 
-      auditRepo.log({
-        proposal_id:    proposal.id,
-        actor_type:     'system',
-        action:         receipt.isSimulated ? 'execution_simulated_confirmed' : 'execution_confirmed',
-        proposal_hash:  proposal.proposal_hash,
-        details: {
-          tx_hash:      receipt.txHash,
-          network:      receipt.network,
-          is_simulated: receipt.isSimulated,
-        },
-      });
+        auditRepo.log({
+          proposal_id:    proposal.id,
+          actor_type:     'system',
+          action:         receipt.isSimulated ? 'execution_simulated_confirmed' : 'execution_confirmed',
+          proposal_hash:  proposal.proposal_hash,
+          details: {
+            tx_hash:                receipt.txHash,
+            network:                receipt.network,
+            is_simulated:           receipt.isSimulated,
+            finalized_block_number: receipt.finalizedBlockNumber,
+            finalized_block_hash:   receipt.finalizedBlockHash,
+            explorer_link:          receipt.explorerLink,
+          },
+        });
+      } else if (receipt.status === 'failed') {
+        proposalsRepo.updateStatus(proposal.id, ['submitted'], 'failed', {
+          execution_tx_hash: receipt.txHash,
+          execution_substate: null,
+          execution_error: receipt.details || 'On-chain execution reverted',
+        });
+
+        auditRepo.log({
+          proposal_id:    proposal.id,
+          actor_type:     'system',
+          action:         'execution_failed',
+          proposal_hash:  proposal.proposal_hash,
+          details: {
+            tx_hash:                receipt.txHash,
+            finalized_block_number: receipt.finalizedBlockNumber,
+            finalized_block_hash:   receipt.finalizedBlockHash,
+            error:                  receipt.details || 'On-chain execution reverted',
+          },
+        });
+      }
 
       return {
         proposal: proposalsRepo.getById(proposal.id)!,
         receipt,
       };
     } catch (err: any) {
-      proposalsRepo.updateStatus(proposal.id, ['submitted'], 'failed', {
-        execution_error: err.message,
-      });
-      auditRepo.log({
-        proposal_id:    proposal.id,
-        actor_type:     'system',
-        action:         'execution_failed',
-        proposal_hash:  proposal.proposal_hash,
-        details: { error: err.message },
-      });
-      throw { status: 502, message: 'Execution failed: ' + err.message };
+      const cleanError = (err?.message || 'Execution error')
+        .replace(/https?:\/\/[^\s]+/gi, '[REDACTED_URL]')
+        .replace(/0x[a-fA-F0-9]{64}/g, '[REDACTED_KEY]');
+      const code = err?.code || 'EXECUTION_ERROR';
+
+      const isTemporary =
+        code === 'TRANSFERS_PAUSED' ||
+        code === 'STUCK_TRANSACTIONS_BLOCK' ||
+        code === 'NONCE_AMBIGUOUS_BLOCK' ||
+        code === 'INSUFFICIENT_RELAYER_BALANCE';
+
+      if (isTemporary) {
+        // Revert to awaiting_approval so it is retryable once operator unpauses or clears stuck nonce / funds
+        proposalsRepo.updateStatus(proposal.id, ['submitted', 'approved'], 'awaiting_approval', {
+          execution_error: cleanError,
+          execution_substate: null,
+        });
+        auditRepo.log({
+          proposal_id: proposal.id,
+          actor_type: 'system',
+          action: 'execution_paused',
+          proposal_hash: proposal.proposal_hash,
+          details: { error: cleanError, code },
+        });
+        throw { status: 503, message: cleanError };
+      } else {
+        // Terminal failure (contract recipient, cap exceeded, balance insufficient, etc.)
+        proposalsRepo.updateStatus(proposal.id, ['submitted', 'approved'], 'failed', {
+          execution_error: cleanError,
+          execution_substate: null,
+        });
+        auditRepo.log({
+          proposal_id: proposal.id,
+          actor_type: 'system',
+          action: 'execution_failed',
+          proposal_hash: proposal.proposal_hash,
+          details: { error: cleanError, code },
+        });
+        throw { status: err?.status || 400, message: cleanError };
+      }
     }
+  }
+
+  async reconcileProposal(
+    id: string,
+    requestingUserId: string
+  ): Promise<{ proposal: Proposal; receipt?: any }> {
+    const proposal = this.getProposal(id, requestingUserId);
+    if (proposal.status !== 'submitted') {
+      return { proposal };
+    }
+
+    if (!this.paymentExecutor.reconcilePayment) {
+      throw { status: 400, message: 'Active executor does not support reconciliation' };
+    }
+
+    const receipt = await this.paymentExecutor.reconcilePayment(proposal);
+    return {
+      proposal: proposalsRepo.getById(id)!,
+      receipt,
+    };
   }
 
   rejectProposal(id: string, requestingUserId: string, reason?: string): Proposal {

@@ -4,7 +4,7 @@ export const ProposalDraftSchema = z.object({
   type: z.literal('PROPOSAL'),
   recipient_handle: z.string().min(1).max(30).regex(/^@?[a-zA-Z0-9_]+$/).transform(h => h.replace(/^@/, '').toLowerCase()),
   amount: z.string().regex(/^[1-9]\d*$/, 'Amount must be a positive integer in base units'),
-  asset: z.literal('AUSD'),
+  asset: z.enum(['AUSD', 'MON']),
   purpose: z.string().max(200).optional(),
 }).strict(); // Reject any unexpected/extra fields
 

@@ -18,22 +18,30 @@ export const errorHandler = (
     message = 'Validation Error';
   }
 
+  // Strip URLs and credentials from message
+  const sanitizedMessage = typeof message === 'string'
+    ? message.replace(/https?:\/\/[^\s]+/gi, '[REDACTED_URL]').replace(/0x[a-fA-F0-9]{64}/g, '[REDACTED_KEY]')
+    : 'Internal Server Error';
+
   if (status >= 400 && status < 500) {
-    logger.warn({ status, path: req.path, errMessage: message }, 'Client error');
+    logger.warn({ status, path: req.path, errMessage: sanitizedMessage }, 'Client error');
     return res.status(status).json({ 
-      error: message, 
+      error: sanitizedMessage, 
       details: err instanceof ZodError ? err.errors : undefined 
     });
   }
 
-  logger.error({ err, path: req.path }, 'Unhandled error');
+  // Never log raw err object containing nested cause, details, or URL
+  logger.error(
+    {
+      errCode: err.code || err.name || 'INTERNAL_ERROR',
+      errMessage: sanitizedMessage,
+      path: req.path,
+    },
+    'Server execution error'
+  );
   
-  if (err.status) {
-    return res.status(err.status).json({ error: err.message });
-  }
-
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+  return res.status(status).json({
+    error: sanitizedMessage,
   });
 };

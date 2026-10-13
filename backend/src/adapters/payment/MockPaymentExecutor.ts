@@ -5,12 +5,26 @@ import crypto from 'crypto';
 export class MockPaymentExecutor implements PaymentExecutor {
   name = 'MockPaymentExecutor (Simulated Settlement)';
   isMock = true;
+  supportedAsset = 'AUSD';
 
   // Option for tests to simulate failure
   private shouldFail = false;
 
   setShouldFail(fail: boolean) {
     this.shouldFail = fail;
+  }
+
+  async reconcilePayment(proposal: Proposal): Promise<ExecutionReceipt> {
+    return {
+      status: 'simulated_confirmed',
+      txHash: proposal.execution_tx_hash || 'sim_0x_reconciled',
+      network: proposal.network || 'Monad Testnet (Simulated)',
+      asset: proposal.asset,
+      amount: proposal.amount,
+      isSimulated: true,
+      timestamp: new Date().toISOString(),
+      details: 'SIMULATED: Reconciled by mock executor.',
+    };
   }
 
   async executePayment(proposal: Proposal): Promise<ExecutionReceipt> {

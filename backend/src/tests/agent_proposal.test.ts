@@ -26,10 +26,10 @@ describe('AI Agent Proposal & Policy Engine Flow (Phase B - F)', () => {
   beforeAll(() => {
     runMigrations();
 
-    // Create 3 users
-    userA = usersRepo.create({ handle: 'alice_agent', display_name: 'Alice', phone: '+1111111111' });
-    userB = usersRepo.create({ handle: 'riya_design', display_name: 'Riya', phone: '+2222222222' });
-    userC = usersRepo.create({ handle: 'charlie_intruder', display_name: 'Charlie', phone: '+3333333333' });
+    // Create 3 users (or reuse if existing)
+    userA = usersRepo.getByHandle('alice_agent') || usersRepo.create({ handle: 'alice_agent', display_name: 'Alice', phone: '+1111111111' });
+    userB = usersRepo.getByHandle('riya_design') || usersRepo.create({ handle: 'riya_design', display_name: 'Riya', phone: '+2222222222' });
+    userC = usersRepo.getByHandle('charlie_intruder') || usersRepo.create({ handle: 'charlie_intruder', display_name: 'Charlie', phone: '+3333333333' });
 
     tokenA = jwt.sign({ sub: userA.id }, env.JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
     tokenB = jwt.sign({ sub: userB.id }, env.JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
@@ -37,6 +37,27 @@ describe('AI Agent Proposal & Policy Engine Flow (Phase B - F)', () => {
 
     mockLLM = new MockLLMAdapter();
     mockExecutor = new MockPaymentExecutor();
+
+    // Seed prior confirmed transaction so riya_design is a known contact for userA
+    try {
+      proposalsRepo.create({
+        id: 'prior_tx_ab',
+        user_id: userA.id,
+        recipient_id: userB.id,
+        recipient_handle: userB.handle,
+        recipient_wallet: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        amount: '1000000',
+        display_amount: '1',
+        asset: 'AUSD',
+        network: 'Monad Testnet',
+        origin: 'user',
+        proposal_hash: 'seed_hash_ab',
+        status: 'confirmed',
+        policy_decision: 'ALLOW',
+        policy_reasons: '[]',
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+      });
+    } catch {}
 
     agentService.setLLMAdapter(mockLLM);
     proposalService.setPaymentExecutor(mockExecutor);
@@ -343,13 +364,35 @@ describe('Phase G: Correctness Gaps', () => {
   beforeAll(() => {
     runMigrations();
 
-    sender    = usersRepo.create({ handle: 'g_sender',    display_name: 'GSender',    phone: '+9991111111' });
-    recipient = usersRepo.create({ handle: 'g_recipient', display_name: 'GRecipient', phone: '+9992222222' });
+    sender    = usersRepo.getByHandle('g_sender') || usersRepo.create({ handle: 'g_sender',    display_name: 'GSender',    phone: '+9991111111' });
+    recipient = usersRepo.getByHandle('g_recipient') || usersRepo.create({ handle: 'g_recipient', display_name: 'GRecipient', phone: '+9992222222' });
 
     senderToken = jwt.sign({ sub: sender.id }, env.JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
 
     mockLLM      = new MockLLMAdapter();
     mockExecutor = new MockPaymentExecutor();
+
+    // Seed prior confirmed transaction so recipient is a known contact for sender
+    try {
+      proposalsRepo.create({
+        id: 'prior_tx_g',
+        user_id: sender.id,
+        recipient_id: recipient.id,
+        recipient_handle: recipient.handle,
+        recipient_wallet: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        amount: '1000000',
+        display_amount: '1',
+        asset: 'AUSD',
+        network: 'Monad Testnet',
+        origin: 'user',
+        proposal_hash: 'seed_hash_g',
+        status: 'confirmed',
+        policy_decision: 'ALLOW',
+        policy_reasons: '[]',
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+      });
+    } catch {}
+
     agentService.setLLMAdapter(mockLLM);
     proposalService.setPaymentExecutor(mockExecutor);
   });
@@ -418,12 +461,17 @@ describe('Phase G: Correctness Gaps', () => {
     let executorCallCount = 0;
     const countingExecutor: import('../adapters/payment/PaymentExecutor').PaymentExecutor = {
       name: 'CountingExecutor',
+      isMock: true,
+      supportedAsset: 'AUSD',
       executePayment: async (proposal) => {
         executorCallCount++;
         return {
           status:      'simulated_confirmed',
           txHash:      'sim_0xtest_double_approve',
           network:     'Monad Testnet',
+          asset:       'AUSD',
+          amount:      proposal.amount,
+          timestamp:   new Date().toISOString(),
           isSimulated: true,
           details:     '[SIMULATED] counting executor',
         };
@@ -516,7 +564,8 @@ describe('Phase G: Correctness Gaps', () => {
 
     const approveRes = await request(app)
       .post(`/proposals/${proposalId}/approve`)
-      .set('Authorization', `Bearer ${tokenG4}`);
+      .set('Authorization', `Bearer ${tokenG4}`)
+      .send({ confirm_new_recipient: true });
 
     expect(approveRes.status).toBe(200);
 
@@ -553,7 +602,8 @@ describe('Phase G: Correctness Gaps', () => {
 
     const approveRes = await request(app)
       .post(`/proposals/${proposalId}/approve`)
-      .set('Authorization', `Bearer ${tokenG5}`);
+      .set('Authorization', `Bearer ${tokenG5}`)
+      .send({ confirm_new_recipient: true });
 
     expect(approveRes.status).toBe(200);
 
@@ -576,5 +626,57 @@ describe('Phase G: Correctness Gaps', () => {
     for (const key of Object.keys(instructionDetails)) {
       expect(instructionAllowed.has(key)).toBe(true);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Amount parsing boundaries: empty, negative, non-numeric, >18 decimals
+  // ---------------------------------------------------------------------------
+  it('should reject or request clarification for empty, negative, non-numeric, or >18 decimals', async () => {
+    // 1. Empty instruction
+    const emptyRes = await request(app)
+      .post('/agent/propose')
+      .set('Authorization', `Bearer ${senderToken}`)
+      .send({ instruction: '' });
+    expect(emptyRes.status).toBe(400); // Zod min(1) validation error
+
+    // 2. Non-numeric amount
+    const nonNumericRes = await request(app)
+      .post('/agent/propose')
+      .set('Authorization', `Bearer ${senderToken}`)
+      .send({ instruction: 'send abc MON to @g_recipient' });
+    expect(nonNumericRes.status).toBe(200);
+    expect(nonNumericRes.body.type).toBe('CLARIFICATION');
+
+    // 3. Negative amount (does not match regex)
+    const negativeRes = await request(app)
+      .post('/agent/propose')
+      .set('Authorization', `Bearer ${senderToken}`)
+      .send({ instruction: 'send -5 MON to @g_recipient' });
+    expect(negativeRes.status).toBe(200);
+    expect(negativeRes.body.type).toBe('CLARIFICATION');
+
+    // 4. More than 18 decimals for MON
+    const tooManyDecimalsRes = await request(app)
+      .post('/agent/propose')
+      .set('Authorization', `Bearer ${senderToken}`)
+      .send({ instruction: 'send 0.12345678901234567899 MON to @g_recipient' });
+    expect(tooManyDecimalsRes.status).toBe(200);
+    expect(tooManyDecimalsRes.body.type).toBe('CLARIFICATION');
+    expect(tooManyDecimalsRes.body.message).toContain('18 decimal places');
+
+    // 5. Direct schema rejection for non-positive or malformed base units
+    expect(() => ProposalDraftSchema.parse({
+      type: 'PROPOSAL',
+      recipient_handle: 'riya',
+      amount: '0', // Zero base units
+      asset: 'MON',
+    })).toThrow();
+
+    expect(() => ProposalDraftSchema.parse({
+      type: 'PROPOSAL',
+      recipient_handle: 'riya',
+      amount: '-1000', // Negative
+      asset: 'MON',
+    })).toThrow();
   });
 });

@@ -11,11 +11,11 @@ export interface User {
 }
 
 export const usersRepo = {
-  create: (user: { handle: string; display_name: string; phone?: string }): User => {
+  create: (user: { handle: string; display_name: string; phone?: string; wallet_address?: string | null }): User => {
     const id = uuidv4();
     const stmt = db.prepare(`
-      INSERT INTO users (id, handle, display_name, phone)
-      VALUES (@id, @handle, @display_name, @phone)
+      INSERT INTO users (id, handle, display_name, phone, wallet_address)
+      VALUES (@id, @handle, @display_name, @phone, @wallet_address)
     `);
     
     try {
@@ -24,6 +24,7 @@ export const usersRepo = {
         handle: user.handle,
         display_name: user.display_name,
         phone: user.phone || null,
+        wallet_address: user.wallet_address || null,
       });
       return usersRepo.getById(id)!;
     } catch (error: any) {
@@ -35,6 +36,7 @@ export const usersRepo = {
               handle: user.handle,
               display_name: user.display_name,
               phone: null,
+              wallet_address: user.wallet_address || null,
             });
             return usersRepo.getById(id)!;
           } catch (retryError: any) {
@@ -48,6 +50,12 @@ export const usersRepo = {
       }
       throw error;
     }
+  },
+
+  setWalletAddress: (id: string, walletAddress: string): boolean => {
+    const stmt = db.prepare('UPDATE users SET wallet_address = ? WHERE id = ?');
+    const result = stmt.run(walletAddress, id);
+    return result.changes > 0;
   },
 
   getById: (id: string): User | undefined => {

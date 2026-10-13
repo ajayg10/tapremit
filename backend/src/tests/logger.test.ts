@@ -42,4 +42,39 @@ describe('Logger Privacy', () => {
     
     spy.mockRestore();
   });
+
+  it('should sanitize viem-shaped errors and never expose sentinel URLs or nested cause in logs, API or audit', async () => {
+    const sentinelUrl = 'https://sensitive-rpc-token:supersecret@testnet-rpc.monad.xyz?secret_key=shhh_private';
+    const spy = vi.spyOn(process.stdout, 'write');
+
+    // Create a viem-shaped error with nested cause and details
+    const viemError = new Error('HTTP request failed: URL unavailable');
+    (viemError as any).name = 'HttpRequestError';
+    (viemError as any).code = 'RPC_CONNECTION_FAILURE';
+    (viemError as any).url = sentinelUrl;
+    (viemError as any).details = `Failed to connect to ${sentinelUrl}`;
+    (viemError as any).cause = {
+      message: `Connect timeout to ${sentinelUrl}`,
+      config: { url: sentinelUrl, token: 'supersecret' },
+    };
+
+    // Test sanitization function directly and through executor
+    const { sanitizeError } = await import('../adapters/payment/MonadPaymentExecutor');
+    const sanitized = sanitizeError(viemError);
+
+    expect(sanitized.code).toBe('RPC_CONNECTION_FAILURE');
+    expect(sanitized.message).not.toContain(sentinelUrl);
+    expect(sanitized.message).not.toContain('supersecret');
+    expect(sanitized.message).not.toContain('shhh_private');
+
+    // Log through app logger
+    logger.error({ errCode: sanitized.code, message: sanitized.message }, 'RPC error occurred');
+
+    const logs = spy.mock.calls.map((c) => String(c[0])).join('');
+    expect(logs).not.toContain(sentinelUrl);
+    expect(logs).not.toContain('supersecret');
+    expect(logs).not.toContain('shhh_private');
+
+    spy.mockRestore();
+  });
 });

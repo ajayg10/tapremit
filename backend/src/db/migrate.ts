@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS proposals (
   policy_reasons TEXT NOT NULL,
   idempotency_key TEXT UNIQUE,
   expires_at DATETIME NOT NULL,
+  execution_mode TEXT NOT NULL DEFAULT 'mock',
+  execution_substate TEXT,
+  execution_nonce INTEGER,
+  execution_signed_tx TEXT,
   execution_tx_hash TEXT,
   execution_error TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -94,12 +98,16 @@ export const runMigrations = () => {
     const additiveColumns = [
       `ALTER TABLE audit_logs ADD COLUMN prev_hash TEXT`,
       `ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT`,
+      `ALTER TABLE proposals ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'mock'`,
+      `ALTER TABLE proposals ADD COLUMN execution_substate TEXT`,
+      `ALTER TABLE proposals ADD COLUMN execution_nonce INTEGER`,
+      `ALTER TABLE proposals ADD COLUMN execution_signed_tx TEXT`,
     ];
     for (const sql of additiveColumns) {
       try { db.exec(sql); } catch { /* column already exists */ }
     }
 
-    // Enforce append-only audit trail at the DB engine level
+    // Enforce append-only audit trail and immutable wallet addresses at DB level
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
         BEFORE UPDATE ON audit_logs
@@ -111,6 +119,13 @@ export const runMigrations = () => {
         BEFORE DELETE ON audit_logs
         BEGIN
           SELECT RAISE(ABORT, 'audit_logs is append-only: deletes are not permitted');
+        END;
+
+      CREATE TRIGGER IF NOT EXISTS users_wallet_address_immutable
+        BEFORE UPDATE OF wallet_address ON users
+        WHEN OLD.wallet_address IS NOT NULL AND NEW.wallet_address IS NOT OLD.wallet_address
+        BEGIN
+          SELECT RAISE(ABORT, 'users.wallet_address is immutable once set');
         END;
     `);
 

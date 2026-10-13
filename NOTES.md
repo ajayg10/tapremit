@@ -21,6 +21,9 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 - **Backup public RPCs**: `https://rpc.ankr.com/monad_testnet` and `https://rpc-testnet.monadinfra.com`
 - **Testnet explorer**: https://testnet.monadscan.com, **faucet**: https://faucet.monad.xyz (from Monad docs)
 - **Mainnet reference** (NOT used by this project): chain id 143, https://rpc.monad.xyz
+- **Monad Gas Charging Model**: Monad charges upfront `gas_paid = gas_limit * price_per_gas`, NOT `gas_used`. Unused gas is NOT refunded for execution below the limit. Source: https://docs.monad.xyz/developer-essentials/gas-pricing (Section: "Gas limit, not gas used"). Plain native EOA-to-EOA MON transfers require strictly 21,000 gas. Transfers to contract addresses trigger fallback code which fails if gas is capped at 21,000; hence TapRemit checks `eth_getCode` and explicitly rejects contract addresses.
+- **Monad Nonce & Mempool Architecture**: Transaction lifecycle and speculative execution in Monad consensus are documented at https://docs.monad.xyz/monad-arch/consensus/local-mempool#transaction-lifecycle-in-monad and JSON-RPC block tags at https://docs.monad.xyz/reference/json-rpc/overview#block-tags. Note: The section title "Deferred nonce and balance validation" cited previously does not exist as an explicit heading in the overview page; the underlying behavior is part of Monad's pipelined execution architecture.
+- **Monad Finality Model**: Monad blocks progress through `Proposed -> Voted -> Finalized -> Verified`. The `latest` tag represents Proposed (speculative execution without consensus vote). Finality must be asserted against the `finalized` tag, and `receipt.blockHash` must strictly match `getBlockByNumber('finalized').hash`. Source: https://docs.monad.xyz/reference/json-rpc/overview#block-tags
 
 ## 4. Open questions and TODOs
 - UI Phase missing read endpoints to confirm with user: `GET /proposals` (list user proposals for dashboard) and `GET /system/status` (adapter configuration flags for persistent badges).
@@ -46,6 +49,11 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 - `audit_logs` maintains a cryptographic tamper-evident hash chain (`prev_hash` + `entry_hash`) ordered by SQLite `rowid`, with DB triggers enforcing append-only behavior (no UPDATE, no DELETE).
 - Audit log details are strictly allowlist-filtered before storage to prevent sensitive data leakage.
 - Mock payments explicitly label settlement as `SIMULATED` with `sim_0x...` tx hashes.
+- Canonical proposal hash includes `recipient_wallet` in addition to handle/amount/network.
+- Immutability of `users.wallet_address` is strictly enforced by SQLite trigger `users_wallet_address_immutable` (BEFORE UPDATE OF wallet_address).
+- `GLOBAL_DAILY_LIMIT_MON` (default 2.0 MON) is enforced both in the policy engine and inside the executor.
+- Fail closed on stuck transactions: Real sends refuse execution if any proposal is in `broadcasted_unknown` or `not_found_needs_review`, unless `OPERATOR_OVERRIDE_ALLOW_SENDS=true`.
+- Finality verification: Re-queries receipt on every poll; resets substate to `broadcasted_unknown` if receipt disappears; only marks `confirmed` when `receipt.blockNumber <= finalizedBlockNumber` AND `receipt.blockHash === finalizedBlock.hash`.
 
 ## 6. Known issues / lessons
 - `https://rpc-devnet.monad.xyz` and `https://rpc.testnet.monad.xyz` do not resolve (ENOTFOUND), never use them.
@@ -62,6 +70,18 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 | NODE_ENV | Environment mode | Optional | development |
 | MOCK_CHAIN | Use mock chain adapter | Optional | true |
 | MONAD_RPC_URL | Monad testnet RPC URL | Required if MOCK_CHAIN=false | - |
+| RPC_PRIMARY_URL | Primary Monad RPC URL | Optional | https://testnet-rpc.monad.xyz |
+| RPC_FALLBACK_URL | Fallback Monad RPC URL | Optional | https://rpc.ankr.com/monad_testnet |
+| EXPLORER_BASE_URL | Block explorer URL | Optional | https://testnet.monadscan.com |
+| RELAYER_ADDRESS | Public address of relayer EOA | Required if MOCK_PAYMENT_EXECUTOR=false | - |
+| RELAYER_PRIVATE_KEY | Private key of relayer EOA | Required if MOCK_PAYMENT_EXECUTOR=false | - |
+| PAUSE_REAL_TRANSFERS | Emergency switch pausing real on-chain transfers | Optional | false |
+| MAX_TESTNET_TRANSFER_MON | Hard per-tx cap for manual/real transfers | Optional | 0.2 |
+| GLOBAL_DAILY_LIMIT_MON | Aggregate rolling 24h limit across all relayer sends | Optional | 2.0 |
+| PER_TX_LIMIT_MON | Policy per-transaction limit for MON | Optional | 0.1 |
+| DAILY_LIMIT_MON | Policy per-user rolling 24h limit for MON | Optional | 1.0 |
+| OPERATOR_OVERRIDE_ALLOW_SENDS | Override stuck transaction lock | Optional | false |
+| MONAD_FINALITY_CONFIRMATION_TIMEOUT_MS | Timeout for receipt polling | Optional | 30000 |
 | DB_PATH | Path to SQLite DB | Optional | ./data/tapremit.db |
 | DEBUG_SQL | Enable SQLite query logging | Optional | false |
 | MOCK_AUTH | Use mock auth adapter | Optional | true |
@@ -79,7 +99,8 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 | MOCK_LLM | Use mock LLM adapter | Optional | true |
 | MOCK_PAYMENT_EXECUTOR | Use mock payment executor | Optional | true |
 | PER_TX_LIMIT_AUSD | Max AUSD per transaction | Optional | 50 |
-| DAILY_LIMIT_AUSD | Max rolling 24h AUSD limit | Optional | 200 |
+| MAX_REBROADCAST_AGE_MS | Maximum age of stored signed tx eligible for startup rebroadcast (ms) | Optional | 600000 |
+| NOT_FOUND_WINDOW_MS | Window before missing receipt transitions to not_found_needs_review (ms) | Optional | 300000 |
 | PROPOSAL_TTL_SECONDS | Proposal expiry TTL in seconds | Optional | 900 |
 
 *Note: When deploying behind a reverse proxy (e.g., Vercel, Nginx), `trust proxy` must be configured in Express so the rate limiter sees real client IPs. Limiter counters are stored in memory and reset on server restart.*
@@ -161,3 +182,47 @@ Phase 0, 1, 2, 3, AI Agent Proposal Flow (Phases B-F), Phase G (Approval & Audit
 - **Agora**: Not started
 - **Aurora**: Not started
 - **Mera**: Placeholder. WebAuthn adapter implemented but untested with a real authenticator.
+
+## 10. Operator Runbook: Clearing a Stuck Nonce
+
+When the single relayer EOA has a stuck transaction (a broadcasted proposal in `broadcasted_unknown` or `not_found_needs_review`), all subsequent real transactions fail-closed with HTTP 503 to prevent nonce gaps or re-ordering failures.
+
+### Symptoms
+- API returns `HTTP 503`: `"Real transfers are blocked: Proposal <id> is in stuck state 'broadcasted_unknown'..."`
+- Health/System status shows unreconciled or pending proposals.
+
+### Step-by-Step Resolution
+1. **Pause Real Transfers Immediately**:
+   Set `PAUSE_REAL_TRANSFERS=true` in `.env` and restart the backend server so no incoming approvals attempt execution during investigation.
+2. **Inspect the Stuck Proposal**:
+   Query the database or proposal endpoint for the proposal's stored `execution_tx_hash` and `execution_nonce`:
+   ```powershell
+   # In SQLite or via API
+   SELECT id, execution_tx_hash, execution_nonce, execution_substate, amount FROM proposals WHERE execution_substate IN ('broadcasted_unknown', 'not_found_needs_review');
+   ```
+3. **Verify On-Chain State via Explorer / Public RPC**:
+   Check if the transaction hash was mined:
+   ```powershell
+   $rpc = "https://testnet-rpc.monad.xyz"
+   $txHash = "<stored_execution_tx_hash>"
+   $body = '{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["' + $txHash + '"]}'
+   Invoke-RestMethod -Uri $rpc -Method POST -ContentType "application/json" -Body $body
+   ```
+   Check current on-chain relayer nonce:
+   ```powershell
+   $relayer = "0x836DF4117d96B860939627B7288a0e5C51fEFD53"
+   $bodyNonce = '{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionCount","params":["' + $relayer + '","latest"]}'
+   (Invoke-RestMethod -Uri $rpc -Method POST -ContentType "application/json" -Body $bodyNonce).result
+   ```
+4. **Resolution Paths**:
+   - **Case A: Transaction was mined on-chain**:
+     Trigger reconciliation via endpoint `POST /proposals/:id/reconcile` (or restart the backend server, which runs the startup sweep automatically). The sweep will verify finality, transition the proposal to `confirmed` or `failed`, clear `execution_substate`, and unblock the queue.
+   - **Case B: Transaction was dropped or stuck in mempool with a low tip**:
+     If the transaction never mined and blocks the nonce `N`:
+     a. Issue a replacement transaction at the same nonce `N` with higher tip/gas to self (`0 MON` to relayer address) manually or via script.
+     b. Once the replacement transaction confirms, run `POST /proposals/:id/reconcile` or update the database record to mark the original proposal as `failed` with substate cleared.
+   - **Case C: Emergency Operator Override**:
+     If an urgent transfer must proceed and the stuck transaction cannot be resolved immediately, set `OPERATOR_OVERRIDE_ALLOW_SENDS=true` in `.env` and restart the backend. *Warning*: Using this override risks subsequent transactions stalling if earlier nonces remain unmined.
+5. **Resume Transfers**:
+   Set `PAUSE_REAL_TRANSFERS=false` and remove `OPERATOR_OVERRIDE_ALLOW_SENDS` once normal operation is verified.
+
